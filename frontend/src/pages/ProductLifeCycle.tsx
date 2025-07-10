@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import HistoryList from "../components/HistoryList";
-import Home from './Home'
+import Home from "./Home";
 import Header from "../components/Header";
 import Modal from "../components/Modal";
 import StageBlock from "../components/StageBlock";
@@ -31,11 +31,12 @@ export default function ProductLifecyclePage() {
   const [records, setRecords] = useState<any[]>([]);
   const [contract, setContract] = useState<any>(null);
   const [account, setAccount] = useState("");
-  const { role } = useAuth(); 
+  const { role } = useAuth();
   const [selectedMaterial, setSelectedMaterial] = useState<any>(null);
   const [inputAmount, setInputAmount] = useState<number>(0);
   const [productName, setProductName] = useState<string>("");
   const { pushRow } = useReport();
+  const [customMaterialName, setCustomMaterialName] = useState("");
 
   // 載入智能合約，初始化合約與歷史紀錄
   async function loadContract() {
@@ -43,7 +44,7 @@ export default function ProductLifecyclePage() {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const code = await provider.getCode(CONTRACT_ADDRESS);
       console.log("code:", code); // 如果是"0x"表示該地址上沒有合約
-      
+
       const network = await provider.getNetwork();
       console.log("Connected to network:", network.chainId);
 
@@ -95,12 +96,12 @@ export default function ProductLifecyclePage() {
     const count = Number(countBN);
     const items: any[] = []; // 需設定為any，因typescript會推斷items是never[]，因為沒有指定型別且初始為空陣列。
     for (let i = 0; i < count; i++) {
-      const record = await carbonContract.getRecord(Number(productId),i);
+      const record = await carbonContract.getRecord(Number(productId), i);
       items.push({
         sender: record[0],
         step: record[1],
         material: record[2],
-        emission: Number(record[3])/1000, // 還原成小數點
+        emission: Number(record[3]) / 1000, // 還原成小數點
         timestamp: Number(record[4]),
       });
     }
@@ -111,18 +112,21 @@ export default function ProductLifecyclePage() {
   const rawCoefficient =
     selectedMaterial?.coefficient ?? selectedMaterial?.coe ?? "";
   const parsedCoefficient = parseFloat(rawCoefficient);
-  const parsedAmount      = parseFloat(inputAmount.toString());
+  const parsedAmount = parseFloat(inputAmount.toString());
 
   const emission =
     selectedMaterial && !isNaN(parsedCoefficient) && !isNaN(parsedAmount)
       ? parsedCoefficient * parsedAmount
       : 0;
 
-  /* submitRecord() */    
+  /* submitRecord() */
   async function submitRecord() {
     // 檢查contract, description, emission是否非null
     const finalEmission = emission;
-    if (role!=="Farmer") { alert("只有茶行可寫入紀錄"); return; }
+    if (role !== "Farmer") {
+      alert("只有茶行可寫入紀錄");
+      return;
+    }
     if (!contract) {
       alert("合約尚未載入");
       return;
@@ -143,13 +147,14 @@ export default function ProductLifecyclePage() {
       return;
     }
     try {
+      const finalName = customMaterialName || selectedMaterial.name;
       const tx = await contract.addRecord(
         Number(productId), // 紀錄為哪個產品
         modalStep,
-        selectedMaterial.name,
+        finalName,
         inputAmount,
         selectedMaterial.unit,
-        Math.round(finalEmission)*1000 // 乘以1000儲存避免小數，輸出時再除回來
+        Math.round(finalEmission) * 1000 // 乘以1000儲存避免小數，輸出時再除回來
       );
       /* 先等鏈上成功 */
       await tx.wait();
@@ -159,12 +164,12 @@ export default function ProductLifecyclePage() {
         productId: Number(productId),
         productName,
         stage: modalStage!,
-        step : modalStep!,
-        material: selectedMaterial.name,
+        step: modalStep!,
+        material: finalName,
         amount: inputAmount,
-        unit  : selectedMaterial.unit,
+        unit: selectedMaterial.unit,
         emission: +emission.toFixed(3),
-        timestamp: Math.floor(Date.now()/1000)
+        timestamp: Math.floor(Date.now() / 1000),
       });
 
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -182,6 +187,7 @@ export default function ProductLifecyclePage() {
     setModalStep(stepName);
     setSelectedMaterial(null); // 清除之前選的項目
     setInputAmount(0); // 每次打開都預設為0
+    setCustomMaterialName("");
   };
 
   const saveAndReturn = async () => {
@@ -191,9 +197,9 @@ export default function ProductLifecyclePage() {
       navigate("/");
     } catch (e) {
       console.log("儲存失敗", e);
-      alert("儲存失敗")
+      alert("儲存失敗");
     }
-  }
+  };
 
   const stages = [
     {
@@ -228,7 +234,7 @@ export default function ProductLifecyclePage() {
 
   return (
     <div className="PageWrapper">
-      <Header title={productName || "loading..."}/>
+      <Header title={productName || "loading..."} />
       <div className="CenteredContent">
         {account ? (
           <p style={{ color: "#666", fontSize: "12px" }}>
@@ -240,34 +246,44 @@ export default function ProductLifecyclePage() {
           </button>
         )}
       </div>
-        <Home
-          productName={productName}
-          productId={productId!}
-          records={records}
-          contract={contract}
-          onStepClick={handleStepClick}
-          stages={stages}
-          openSections={openSections}
-          setOpenSections={setOpenSections}
-          saveAndReturn={saveAndReturn}
-        />
+      <Home
+        productName={productName}
+        productId={productId!}
+        records={records}
+        contract={contract}
+        onStepClick={handleStepClick}
+        stages={stages}
+        openSections={openSections}
+        setOpenSections={setOpenSections}
+        saveAndReturn={saveAndReturn}
+      />
+
       <Modal visible={!!modalStep} onClose={() => setModalStep(null)}>
         <h3>新增碳排放紀錄</h3>
         <h5 style={{ marginBottom: "2px", marginTop: 0 }}>
           階段：{modalStage}
         </h5>
         <h5 style={{ marginTop: 0 }}>類別：{modalStep}</h5>
-
+        <input
+          className="InputAmount"
+          placeholder="輸入項目名稱（例如：甲牌汽油）"
+          value={customMaterialName}
+          onChange={(e) => setCustomMaterialName(e.target.value)}
+          style={{
+            marginBottom: 12,
+            padding: "8px",
+            fontSize: "14px",
+            borderRadius: "6px",
+            border: "1px solid #ccc",
+            width: "100%",
+          }}
+        />
         <Autocomplete
           options={matchedOptions}
           getOptionLabel={(option) => option.name}
           onChange={(e, val) => setSelectedMaterial(val)}
           renderInput={(params) => (
-            <TextField 
-              {...params}
-              label="選擇係數"
-              variant="outlined"
-            />
+            <TextField {...params} label="選擇係數" variant="outlined" />
           )}
         />
 
@@ -284,14 +300,13 @@ export default function ProductLifecyclePage() {
           <span style={{ fontSize: "14px", color: "#444" }}>
             {selectedMaterial?.unit ?? ""}
           </span>
-
         </div>
 
         <p style={{ fontSize: "14px", color: "#444" }}>
           預估碳排量：{emission.toFixed(2)} kg CO₂e
         </p>
 
-        {role==="Farmer" && (
+        {role === "Farmer" && (
           <div className="ButtonRow">
             <button className="SubmitButton" onClick={submitRecord}>
               確認提交
