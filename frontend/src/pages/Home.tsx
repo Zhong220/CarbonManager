@@ -10,13 +10,15 @@ import "./index.css";
 /* ────────── 型別 ────────── */
 interface HomeProps {
   productName: string;
-  records: any[];               // 前端暫存
+  records: any[]; // 前端暫存
   productId: string;
   contract: ethers.Contract | null;
   onStepClick: (stage: string, step: string) => void;
   stages: any[];
   openSections: Record<string, boolean>;
-  setOpenSections: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setOpenSections: React.Dispatch<
+    React.SetStateAction<Record<string, boolean>>
+  >;
   saveAndReturn: () => void;
 }
 
@@ -52,7 +54,9 @@ export default function Home({
   setOpenSections,
   saveAndReturn,
 }: HomeProps) {
-  const [activeTab, setActiveTab] = useState<"lifecycle" | "history">("lifecycle");
+  const [activeTab, setActiveTab] = useState<"lifecycle" | "history">(
+    "lifecycle"
+  );
   const [loading, setLoading] = useState(false);
 
   /* ───── 撈鏈上資料（舊 API：getRecordCount / getRecord） ───── */
@@ -70,13 +74,15 @@ export default function Home({
     const out: any[] = [];
     for (let i = 0; i < total; i++) {
       // getRecord 回傳 (address, step, material, emission, timestamp)
-      const [, stepStr, material, emissionBN, ts] = await (contract as any).getRecord(pid, i);
+      const [, stepStr, material, emissionBN, ts] = await (
+        contract as any
+      ).getRecord(pid, i);
       const [stage, group] = splitStep(stepStr);
       out.push({
         stage,
         group,
         material,
-        amount: "",          // 鏈上無 amount/unit → 之後靠前端暫存補
+        amount: "", // 鏈上無 amount/unit → 之後靠前端暫存補
         unit: "",
         perAmount: "",
         perUnit: "",
@@ -131,20 +137,32 @@ export default function Home({
       if (!rows.length) return alert("此產品尚無紀錄");
 
       const header = [
-        "生命週期階段", "群組", "名稱",
-        "總活動量", "單位",
-        "每單位數量", "單位", "名稱",
-        "數值(kgCO2e/單位)", "單位",
+        "生命週期階段",
+        "群組",
+        "名稱",
+        "項目用量",
+        "用量單位",
+        "每單位數量",
+        "單位",
+        "係數名稱",
+        "數值(kgCO2e/單位)",
+        "單位",
         "數據來源",
       ];
 
       const aoa = [
         header,
         ...rows.map((r) => [
-          r.stage, r.group, r.material,
-          r.amount, r.unit,
-          r.perAmount, r.perUnit, r.perName,
-          r.emission, "kg CO2e",
+          r.stage,
+          r.group,
+          r.material,
+          r.amount,
+          r.unit,
+          r.perAmount,
+          r.perUnit,
+          r.perName,
+          r.emission,
+          "kg CO2e",
           new Date(r.timestamp).toLocaleString(),
         ]),
       ];
@@ -154,7 +172,7 @@ export default function Home({
       XLSX.utils.book_append_sheet(wb, ws, "2.平台匯入表");
       const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
       const url = URL.createObjectURL(new Blob([buf]));
-      const a   = document.createElement("a");
+      const a = document.createElement("a");
       a.href = url;
       a.download = `盤查表_product${productId}_${Date.now()}.xlsx`;
       a.click();
@@ -195,7 +213,11 @@ export default function Home({
               儲存並回到商品列表
             </button>
 
-             <button className="SaveButton" onClick={downloadReport} disabled={loading}>
+            <button
+              className="SaveButton"
+              onClick={downloadReport}
+              disabled={loading}
+            >
               {loading ? "匯出中…" : "⬇ 下載報表"}
             </button>
           </div>
