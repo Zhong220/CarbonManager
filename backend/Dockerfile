@@ -30,5 +30,5 @@ ENV FLASK_DEBUG=1
 EXPOSE 5000
 
 # Command to run the application
-CMD ["sh", "-c", "python scripts/init_db.py && python -m flask run --host=0.0.0.0"]
+CMD ["sh", "-c", "python database/init_db.py && python -m flask run --host=0.0.0.0"]
 

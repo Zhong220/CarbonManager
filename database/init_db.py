@@ -1,7 +1,7 @@
 import os
 import mysql.connector
 
-path = 'scripts/schema.sql'
+path = 'database/schema.sql'
 
 def run_sql_script(path):
     with open(path, 'r') as f:
