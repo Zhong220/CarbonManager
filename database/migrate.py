@@ -1,7 +1,6 @@
 import os
 import sys
 from pathlib import Path
-import Config from config
 import mysql.connector
 
 # ---- Config (env with sensible defaults for local) ----
