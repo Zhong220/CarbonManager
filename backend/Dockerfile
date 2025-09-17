@@ -9,11 +9,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy the rest of the backend code
 COPY . . 
 
-# # Set environment variables
-# ENV FLASK_APP=run.py
-# ENV FLASK_ENV=development
-# ENV FLASK_DEBUG=1
-
 # Expose the port the app runs on
 EXPOSE 5000
 
