@@ -53,3 +53,9 @@ dump-schema:
 # ---- One-liners for daily use ----
 dev: up          # start db -> migrate -> backend
 clean: down-all  # stop everything & remove orphans
+
+
+# Test endpoints
+test:
+	curl -s http://localhost:5001/health
+	curl -s http://localhost:5001/debug/db-ping
