@@ -3,7 +3,7 @@ import os
 from datetime import timedelta
 
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key'
+    # Security settings
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or 'jwt-secret-key'
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     
@@ -20,4 +20,3 @@ class Config:
     # Application settings
     DEBUG = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     TESTING = False
-
