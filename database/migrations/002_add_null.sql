@@ -16,7 +16,7 @@ ALTER TABLE factors
   MODIFY COLUMN value_per_unit DOUBLE        NULL,
   MODIFY COLUMN category       VARCHAR(100)  NULL,
   MODIFY COLUMN region         VARCHAR(100)  NULL,
-  MODIFY COLUMN source         VARCHAR(255)  NULL,
+  MODIFY COLUMN source         VARCHAR(255)  NULL;
 
 
 SET FOREIGN_KEY_CHECKS = 1;
