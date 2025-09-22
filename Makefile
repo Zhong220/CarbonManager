@@ -72,7 +72,7 @@ logs: ## Tail backend logs
 	docker compose logs -f $(BACKEND_SVC)
 
 # ========== One-shot flows ==========
-up: down-all clean-networks up-db migrate up-backend ## Start clean: fix networks -> DB -> migrations -> backend
+up: down up-db migrate up-backend ## Start clean: fix networks -> DB -> migrations -> backend
 	@echo "🚀 All services are up"
 
 down: ## Stop all services
@@ -110,3 +110,4 @@ desc-%: ## Describe table (usage: make desc-emissions)
 test: ## Test backend endpoints (/health and /debug/db-ping)
 	@curl -s http://localhost:5001/health | jq .
 	@curl -s http://localhost:5001/debug/db-ping | jq .
+
