@@ -1,0 +1,93 @@
+# backend/openapi.yaml
+# YAML file defining the OpenAPI specification for the on-chain API, used by Swagger UI at /docs
+openapi: 3.0.3
+info:
+  title: CarbonManager On-Chain API
+  version: 1.0.0
+servers:
+  - url: http://localhost:5001
+paths:
+  /onchain/emissions/{emission_id}:
+    post:
+      summary: Create/refresh a pending on-chain job for an emission
+      parameters:
+        - in: path
+          name: emission_id
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            example: {}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  emission_id: { type: integer }
+                  status: { type: string, enum: [pending] }
+                  payload: { type: object }
+        "404":
+          description: Emission not found
+    get:
+      summary: Get on-chain status for an emission
+      parameters:
+        - in: path
+          name: emission_id
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Status record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  emission_id: { type: integer }
+                  status: { type: string, enum: [pending,submitted,confirmed,failed] }
+                  tx_hash: { type: string, nullable: true }
+                  payload_json: { type: object }
+                  error_msg: { type: string, nullable: true }
+        "404":
+          description: No on-chain record
+  /onchain/callback:
+    put:
+      summary: Chain-service callback to update status & tx hash
+      parameters:
+        - in: header
+          name: X-Chain-Secret
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  properties:
+                    emission_id: { type: integer }
+                    status: { type: string, enum: [submitted,confirmed,failed] }
+                    tx_hash: { type: string, nullable: true }
+                    error_msg: { type: string, nullable: true }
+                - type: object
+                  properties:
+                    tx_hash: { type: string }
+                    status: { type: string, enum: [submitted,confirmed,failed] }
+                    error_msg: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Updated
+        "401":
+          description: Unauthorized
+        "404":
+          description: Record not found

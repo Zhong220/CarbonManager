@@ -111,3 +111,14 @@ test: ## Test backend endpoints (/health and /debug/db-ping)
 	@curl -s http://localhost:5001/health | jq .
 	@curl -s http://localhost:5001/debug/db-ping | jq .
 
+
+
+seed: ## Apply minimal seed file into DB
+	docker compose exec -T $(DB_SVC) \
+	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
+	  < database/seeds/dev_seed.sql
+
+show-seed-emission: ## Show seed emission(s)
+	docker compose exec $(DB_SVC) \
+	  mysql -N -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
+	  -e "SELECT id, name, product_id, stage_id FROM emissions ORDER BY id DESC LIMIT 5;"
