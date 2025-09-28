@@ -1,24 +1,29 @@
 from flask import Flask, jsonify, send_from_directory
 from flask_jwt_extended import JWTManager
 from config import Config
+import webbrowser
+
 import os
 from db_connection import get_db
 from dotenv import load_dotenv  
 
 from routes.onchain import onchain_bp
+from routes.auth import auth_bp
 
 # Load environment variables
 load_dotenv()
 
+jwt = JWTManager()    
+
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)    # Load configuration
-    # jwt = JWTManager(app)    
     
+    jwt.init_app(app)   # Initialize JWT
 
     # register blueprints
     app.register_blueprint(onchain_bp)
-    
+    app.register_blueprint(auth_bp)
 
     # --------- Swagger ---------
     @app.route("/openapi.yaml")     # Serve raw OpenAPI file
@@ -65,4 +70,6 @@ app = create_app()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) # Listening on port 5000 inside the container
-
+    # Auto open swagger UI in browser
+    # webbrowser.open('http://localhost:5000/docs')
+    

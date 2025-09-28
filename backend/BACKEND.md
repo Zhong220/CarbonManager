@@ -63,4 +63,15 @@ make help
   **Called by the chain service** to update status (and `tx_hash`).
   Requires header: `X-Chain-Secret: <value from .env>`.
 
+### Auth Endpoints
+
+* `POST /auth/register`
+  Create a new user.
+
+* `POST /auth/login`
+  Authenticate an existing user.
+  
+* `GET /auth/me`
+Get the current user info (JWT-protected, needs token).
+
 

@@ -6,6 +6,12 @@ info:
   version: 1.0.0
 servers:
   - url: http://localhost:5001
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
 paths:
   /onchain/emissions/{emission_id}:
     post:
@@ -91,3 +97,103 @@ paths:
           description: Unauthorized
         "404":
           description: Record not found
+  /auth/register:
+    post:
+      summary: Register a new user
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account:
+                  type: string
+                  example: user@example.com
+                password:
+                  type: string
+                  example: mysecret
+                user_name:
+                  type: string
+                  example: Alice
+      responses:
+        "201":
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+        "400":
+          description: Missing or invalid input
+        "409":
+          description: User already exists
+  /auth/login:
+    post:
+      summary: Login with account and password
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account:
+                  type: string
+                  example: user@example.com
+                password:
+                  type: string
+                  example: mysecret
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+        "400":
+          description: Invalid input
+        "401":
+          description: Invalid credentials
+  /auth/me:
+    get:
+      summary: Get current logged-in user
+      tags: [Auth]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  email_account:
+                    type: string
+                  name:
+                    type: string
+                  user_type:
+                    type: string
+                    enum: [shop, customer]
+                  organization_id:
+                    type: integer
+        "401":
+          description: Unauthorized
