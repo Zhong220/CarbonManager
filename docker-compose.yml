@@ -25,7 +25,7 @@ services:
       dockerfile: database/Dockerfile
     depends_on:
       db:
-        condition: service_healthy	curl -s http://localhost:5001/debug/db-ping
+        condition: service_healthy	
     env_file: .env
     environment:
       DB_HOST: db
