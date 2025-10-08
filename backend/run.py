@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from routes.onchain import onchain_bp
 from routes.auth import auth_bp
+from routes.product_types import product_types_bp
 
 # Load environment variables
 load_dotenv()
@@ -24,7 +25,8 @@ def create_app(config_class=Config):
     # register blueprints
     app.register_blueprint(onchain_bp)
     app.register_blueprint(auth_bp)
-
+    app.register_blueprint(product_types_bp)
+    
     # --------- Swagger ---------
     @app.route("/openapi.yaml")     # Serve raw OpenAPI file
     def openapi_yaml():
@@ -43,7 +45,9 @@ def create_app(config_class=Config):
         </script>
     </body></html>
     """
-    @app.route("/docs")   # Serve Swagger UI
+    
+    # Run Swagger UI at root
+    @app.route("/")   
     def docs():
         return SWAGGER_HTML
 

@@ -13,17 +13,14 @@ def create_user(account: str, password: str, user_name: str, *, user_type: str =
         raise ValueError("account, password, and user_name are required")
 
     hashed = generate_password_hash(password)
-
+    sql = """
+        INSERT INTO users (email_account, password_hash, name, user_type, organization_id)
+        VALUES (%s, %s, %s, %s, %s)
+        """
     with get_db() as conn:
         cur = conn.cursor()
         try:
-            cur.execute(
-                """
-                INSERT INTO users (email_account, password_hash, name, user_type, organization_id)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (email, hashed, user_name, user_type, organization_id),
-            )
+            cur.execute( sql,(email, hashed, user_name, user_type, organization_id),)
             conn.commit()
             return cur.lastrowid
         finally:
@@ -33,15 +30,15 @@ def get_user_by_account(account: str) -> dict | None:
     email = (account or '').strip().lower()
     if not email:
         return None
-
+    sql = """
+        SELECT id, email_account, password_hash, name, user_type, organization_id, created_at 
+        FROM users 
+        WHERE email_ci = %s
+        """
     with get_db() as conn:
         cur = conn.cursor(dictionary=True)
         try:
-            cur.execute(
-                "SELECT id, email_account, password_hash, name, user_type, organization_id, created_at "
-                "FROM users WHERE email_ci = %s",
-                (email,),
-            )
+            cur.execute(sql,(email,),)
             return cur.fetchone()
         finally:
             cur.close()
@@ -57,14 +54,45 @@ def generate_tokens(user_id: int, account: str, *, user_type: str = 'customer') 
     return {"access_token": access_token, "refresh_token": refresh_token}
 
 def get_user_by_id(user_id: int) -> dict | None:
+    sql = """
+        SELECT id, email_account, password_hash, name, user_type, organization_id, created_at 
+        FROM users 
+        WHERE id = %s
+        """
     with get_db() as conn:
         cur = conn.cursor(dictionary=True)
         try:
-            cur.execute(
-                "SELECT id, email_account, password_hash, name, user_type, organization_id, created_at "
-                "FROM users WHERE id = %s",
-                (user_id,),
-            )
+            cur.execute(sql,(user_id,),)
             return cur.fetchone()
         finally:
             cur.close()
+
+def assign_user_to_org(user_id: int, org_id: int):
+    sql = """
+        UPDATE users
+        SET organization_id = %s, user_type = 'shop'
+        WHERE id = %s
+        """
+    with get_db() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(sql,(org_id, user_id),)
+            conn.commit()
+        finally:
+            cur.close()
+def get_user_organization(user_id: int) -> dict| None:
+    sql = """
+        SELECT o.id, o.name, o.slug, o.created_at
+        FROM organizations o
+        JOIN users u ON u.organization_id = o.id
+        WHERE u.id = %s
+        """
+    with get_db() as conn:
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(sql,(user_id,),)
+            return cur.fetchone()
+        finally:
+            cur.close()
+            
+            

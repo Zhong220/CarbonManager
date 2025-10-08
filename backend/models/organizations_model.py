@@ -1,65 +1,87 @@
-# backend/models/organization_model.py
+# backend/models/organizations_model.py
 from db_connection import get_db
 
 def create_organization(name: str, slug: str | None = None) -> int:
+    sql = """ 
+        INSERT INTO organizations (name, slug)  
+        VALUES (%s, %s)
+        """ 
     with get_db() as conn:
         cur = conn.cursor()
         try:
-            cur.execute(
-                """
-                INSERT INTO organizations (name, slug)
-                VALUES (%s, %s)
-                """,
-                (name, slug),
-            )
+            cur.execute(sql,(name, slug),)
             conn.commit()
             return cur.lastrowid
         finally:
             cur.close()
 
 def get_organization_by_id(org_id: int) -> dict | None:
+    sql = """
+        SELECT id, name, slug, created_at 
+        FROM organizations 
+        WHERE id = %s
+    """
     with get_db() as conn:
         cur = conn.cursor(dictionary=True)
         try:
-            cur.execute(
-                "SELECT id, name, slug, created_at FROM organizations WHERE id = %s",
-                (org_id,),
-            )
+            cur.execute(sql,(org_id,),)
             return cur.fetchone()
         finally:
             cur.close()
-
-def get_organization_by_slug(slug: str) -> dict | None:
+            
+def get_organization_by_name(name: str) -> dict | None:
+    sql = """
+        SELECT id, name, slug, created_at 
+        FROM organizations 
+        WHERE name = %s
+        """
     with get_db() as conn:
         cur = conn.cursor(dictionary=True)
         try:
-            cur.execute(
-                "SELECT id, name, slug, created_at FROM organizations WHERE slug = %s",
-                (slug,),
-            )
+            cur.execute(sql,(name,),)
+            return cur.fetchone()
+        finally:
+            cur.close()
+            
+def get_organization_by_slug(slug: str) -> dict | None:
+    sql = """
+        SELECT id, name, slug, created_at 
+        FROM organizations 
+        WHERE slug = %s
+        """
+    with get_db() as conn:
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(sql,(slug,),)
             return cur.fetchone()
         finally:
             cur.close()
 
 def list_organizations(limit: int = 50) -> list[dict]:
+    sql = """
+        SELECT id, name, slug, created_at 
+        FROM organizations 
+        ORDER BY created_at 
+        DESC LIMIT %s
+        """
     with get_db() as conn:
         cur = conn.cursor(dictionary=True)
         try:
-            cur.execute(
-                "SELECT id, name, slug, created_at FROM organizations ORDER BY created_at DESC LIMIT %s",
-                (limit,),
-            )
+            cur.execute(sql,(limit,),)
             return cur.fetchall()
         finally:
             cur.close()
 
 def assign_user_to_org(user_id: int, org_id: int):
+    sql = """
+        UPDATE users 
+        SET organization_id = %s 
+        WHERE id = %s
+        """
     with get_db() as conn:
         cur = conn.cursor()
         try:
-            cur.execute(
-                "UPDATE users SET organization_id = %s, user_type = 'shop' WHERE id = %s",
-                (org_id, user_id),
+            cur.execute(sql,(org_id, user_id),
             )
             conn.commit()
         finally:
