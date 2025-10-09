@@ -74,4 +74,25 @@ make help
 * `GET /auth/me`
 Get the current user info (JWT-protected, needs token).
 
+* `PUT /auth/me`
+Update the current user info, assigning organization to it. 
+
+* `POST /auth/organization`
+Create new organization. 
+
+### Product Types
+*`GET	/product_types`
+Get all the product types belong to the organization which the user is under. 
+
+*`POST	/product_types`
+Add a new product type to this organization. 
+
+*`GET	/product_types/{product_type_id}`	
+Get the information of a certain product type in this organization. 
+
+* `PUT	/product_types/{product_type_id}`	
+Update the information of this product type. 
+
+* `DELETE	/product_types/{product_type_id}`	
+Delete the product type. 
 
