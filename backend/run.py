@@ -51,22 +51,10 @@ def create_app(config_class=Config):
     def docs():
         return SWAGGER_HTML
 
-    # --------- Utility routes --------- 
     @app.route("/health")       # Health check route
     def health():
         return jsonify(ok=True), 200
     
-    @app.route("/debug/db-ping")    # Debug DB ping
-    def db_ping():
-        with get_db() as conn:
-            cur = conn.cursor()
-            try:
-                cur.execute("SHOW TABLES;")
-                tables = [row[0] for row in cur.fetchall()]
-            finally:
-                cur.close()
-        return jsonify({"tables": tables})
-
 
     return app
 
