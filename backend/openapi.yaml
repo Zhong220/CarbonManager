@@ -22,14 +22,6 @@ paths:
           name: emission_id
           required: true
           schema: { type: integer, minimum: 1 }
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-            example: {}
       responses:
         "201":
           description: Created

@@ -4,7 +4,6 @@ from flask_jwt_extended import (
     jwt_required, get_jwt_identity, get_jwt, create_access_token
 )
 # from werkzeug.security import generate_password_hash, check_password_hash
-from db_connection import get_db
 from models.user_model import (
     create_user, get_user_by_account, verify_password, 
     generate_tokens, get_user_by_id
