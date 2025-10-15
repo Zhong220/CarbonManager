@@ -66,7 +66,7 @@ make help
 ### Auth Endpoints
 
 * `POST /auth/register`
-  Create a new user.
+  Create a new user, and register an organization if the type is shop.
 
 * `POST /auth/login`
   Authenticate an existing user.
@@ -77,8 +77,6 @@ Get the current user info (JWT-protected, needs token).
 * `PUT /auth/me`
 Update the current user info, assigning organization to it. 
 
-* `POST /auth/organization`
-Create new organization. 
 
 ### Product Types
 *`GET	/product_types`

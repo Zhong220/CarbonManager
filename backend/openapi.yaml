@@ -112,6 +112,12 @@ paths:
                 user_name:
                   type: string
                   example: Alice
+                user_type:
+                  type: string
+                  example: shop
+                org_name:
+                  type: string
+                  example: Lee's Tea
       responses:
         "201":
           description: User registered successfully
@@ -126,10 +132,15 @@ paths:
                     type: string
                   refresh_token:
                     type: string
+                  user_name:
+                    type: string
+                  user_type:
+                    type: string
         "400":
           description: Missing or invalid input
         "409":
           description: User already exists
+          
   /auth/login:
     post:
       summary: Login with account and password
@@ -233,43 +244,6 @@ paths:
           description: Invalid input
         "401":
           description: Unauthorized
-  /auth/organization:
-    post:
-      summary: Create a new organization
-      tags: [Auth]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                name:
-                  type: string
-                  example: My Organization
-                slug:
-                  type: string
-                  example: my-org
-      responses:
-        "201":
-          description: Organization created successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    type: integer
-                  name:
-                    type: string
-                  slug:
-                    type: string
-        "400":
-          description: Invalid input
-        "401":
-          description: Unauthorized
-        "409":
-          description: Organization already exists
   /product_types:
     get:
       summary: Get all available product types from this organization 

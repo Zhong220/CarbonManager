@@ -2,6 +2,8 @@
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, create_refresh_token
 from db_connection import get_db
+from datetime import timedelta
+
 
 # Schema columns:
 # id, email_account, email_ci (generated), password_hash, name,
@@ -46,16 +48,26 @@ def get_user_by_account(account: str) -> dict | None:
 def verify_password(stored_hash: str, provided_password: str) -> bool:
     return check_password_hash(stored_hash, provided_password)
 
-def generate_tokens(user_id: int, account: str, *, user_type: str = 'customer') -> dict:
-    claims = {"account": account, "user_type": user_type}
-    access_token = create_access_token(identity=str(user_id), additional_claims=claims)
-    refresh_token = create_refresh_token(identity=str(user_id), additional_claims=claims)
-
-    return {"access_token": access_token, "refresh_token": refresh_token}
+def generate_tokens(user_id: int, account: str, *, user_type: str, organization_id: int | None ) -> dict:
+    claims = {
+        "account": account, 
+        "user_type": user_type,
+        "organization_id": organization_id,    
+    }
+    access = create_access_token(identity=str(user_id), additional_claims=claims, expires_delta=timedelta(minutes=60))
+    refresh = create_refresh_token(identity=str(user_id),additional_claims=claims,expires_delta=timedelta(days=7))
+    return {"access_token": access, "refresh_token": refresh}
 
 def get_user_by_id(user_id: int) -> dict | None:
     sql = """
-        SELECT id, email_account, password_hash, name, user_type, organization_id, created_at 
+        SELECT 
+            id, 
+            email_account, 
+            password_hash, 
+            name, 
+            user_type, 
+            organization_id, 
+            created_at 
         FROM users 
         WHERE id = %s
         """
@@ -67,19 +79,6 @@ def get_user_by_id(user_id: int) -> dict | None:
         finally:
             cur.close()
 
-def assign_user_to_org(user_id: int, org_id: int):
-    sql = """
-        UPDATE users
-        SET organization_id = %s, user_type = 'shop'
-        WHERE id = %s
-        """
-    with get_db() as conn:
-        cur = conn.cursor()
-        try:
-            cur.execute(sql,(org_id, user_id),)
-            conn.commit()
-        finally:
-            cur.close()
 def get_user_organization(user_id: int) -> dict| None:
     sql = """
         SELECT o.id, o.name, o.slug, o.created_at
