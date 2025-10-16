@@ -100,6 +100,7 @@ logs: ## Tail backend logs
 up: down up-db migrate up-backend ## Start clean: fix networks -> DB -> migrations -> backend
 	@echo "🚀 All services are up"
 	$(MAKE) open-site
+
 down: ## Stop all services
 	docker compose down
 
@@ -148,7 +149,6 @@ show-seed-emission: ## Show seed emission(s)
 	  -e "SELECT id, name, product_id, stage_id FROM emissions ORDER BY id DESC LIMIT 5;"
 
 # ========== CI Backend ==========
-.PHONY: 
 
 be-format: ## Auto-format (ruff imports + black)
 	cd backend && ruff check . --fix
@@ -166,6 +166,5 @@ be-fix: ## Auto-fix
 	cd backend && python -m black .
 	$(MAKE) be-lint
 
-.PHONY: be-setup
 be-setup: ## Install backend dev deps
-  cd backend && pip install -r requirements.txt -r requirements-dev.txt
+	cd backend && pip install -r requirements.txt -r requirements-dev.txt
