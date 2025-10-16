@@ -1,6 +1,4 @@
 # backend/models/chain_model.py
-import json
-from typing import Optional 
 from db_connection import get_db
 
 ##################################### emissions_onchain ###########################
@@ -16,20 +14,21 @@ from db_connection import get_db
 # | updated_at   | timestamp                                        | NO   | MUL | CURRENT_TIMESTAMP | DEFAULT_GENERATED on update CURRENT_TIMESTAMP |
 # +--------------+--------------------------------------------------+------+-----+-------------------+-----------------------------------------------+
 
-def fetch_emission(emission_id: int): 
+
+def fetch_emission(emission_id: int):
     sql = """
-        SELECT 
-            e.id, 
-            e.product_id, 
-            e.stage_id, 
-            e.factor_id, 
-            e.tag_id, 
-            e.quantity, 
-            e.created_by, 
-            e.sort_order, 
-            e.created_at, 
-            p.organization_id, 
-            p.type_id, 
+        SELECT
+            e.id,
+            e.product_id,
+            e.stage_id,
+            e.factor_id,
+            e.tag_id,
+            e.quantity,
+            e.created_by,
+            e.sort_order,
+            e.created_at,
+            p.organization_id,
+            p.type_id,
             p.name AS product_name
         FROM emissions e
         JOIN products p ON p.id = e.product_id
@@ -43,8 +42,9 @@ def fetch_emission(emission_id: int):
             return cur.fetchone()
         finally:
             cur.close()
- 
-def build_payload(em: dict) -> dict:        
+
+
+def build_payload(em: dict) -> dict:
     return {
         "emission_id": em["id"],
         "product_id": em["product_id"],
@@ -60,7 +60,7 @@ def build_payload(em: dict) -> dict:
     }
 
 
-def upsert_pending(emission_id: int)-> None:
+def upsert_pending(emission_id: int) -> None:
     sql = """
         INSERT INTO emissions_onchain (emission_id, status)
         VALUES (%s,'pending')
@@ -71,22 +71,21 @@ def upsert_pending(emission_id: int)-> None:
     with get_db() as conn:
         cur = conn.cursor()
         try:
-            cur.execute(sql, (emission_id, ))
+            cur.execute(sql, (emission_id,))
             conn.commit()
         finally:
             cur.close()
-            
 
 
-def get_status(emission_id: int)-> dict|None:
+def get_status(emission_id: int) -> dict | None:
     sql = """
-        SELECT 
-            id, 
-            emission_id, 
-            status, 
-            tx_hash, 
+        SELECT
+            id,
+            emission_id,
+            status,
+            tx_hash,
             error_msg,
-            created_at, 
+            created_at,
             updated_at
         FROM emissions_onchain
         WHERE emission_id = %s
@@ -94,10 +93,11 @@ def get_status(emission_id: int)-> dict|None:
     with get_db() as conn:
         cur = conn.cursor(dictionary=True)
         try:
-            cur.execute(sql, (emission_id, ))
+            cur.execute(sql, (emission_id,))
             return cur.fetchone()
         finally:
             cur.close()
+
 
 def set_status_by_tx(tx_hash: str, *, status: str, error_msg: str | None) -> int:
     sql = """

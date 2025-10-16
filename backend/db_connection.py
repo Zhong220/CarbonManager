@@ -1,6 +1,6 @@
-import mysql.connector
-import os
 from contextlib import contextmanager
+
+import mysql.connector
 from config import Config
 
 
@@ -15,6 +15,4 @@ def get_db():
         raise
     finally:
         if conn and conn.is_connected():
-            conn.close() 
-            
-            
+            conn.close()
