@@ -1,19 +1,6 @@
 # backend/models/organizations_model.py
 from db_connection import get_db
 
-def create_organization(name: str, slug: str | None = None) -> int:
-    sql = """ 
-        INSERT INTO organizations (name, slug)  
-        VALUES (%s, %s)
-        """ 
-    with get_db() as conn:
-        cur = conn.cursor()
-        try:
-            cur.execute(sql,(name, slug),)
-            conn.commit()
-            return cur.lastrowid
-        finally:
-            cur.close()
 
 def get_organization_by_id(org_id: int) -> dict | None:
     sql = """
@@ -28,7 +15,8 @@ def get_organization_by_id(org_id: int) -> dict | None:
             return cur.fetchone()
         finally:
             cur.close()
-            
+          
+
 def get_organization_by_name(name: str) -> dict | None:
     sql = """
         SELECT id, name, slug, created_at 
@@ -42,20 +30,39 @@ def get_organization_by_name(name: str) -> dict | None:
             return cur.fetchone()
         finally:
             cur.close()
-            
-def get_organization_by_slug(slug: str) -> dict | None:
-    sql = """
-        SELECT id, name, slug, created_at 
-        FROM organizations 
-        WHERE slug = %s
-        """
-    with get_db() as conn:
-        cur = conn.cursor(dictionary=True)
+
+
+def create_organization(name: str, slug: str | None = None) -> dict:
+    existing = get_organization_by_name(name)
+    if existing:
+        return existing
+    sql = """ 
+        INSERT INTO organizations (name, slug)  
+        VALUES (%s, %s)
+        """ 
+    with get_db() as conn:  
+        cur = conn.cursor()
         try:
-            cur.execute(sql,(slug,),)
-            return cur.fetchone()
+            cur.execute(sql,(name, slug),)
+            conn.commit()
+            new_id = cur.lastrowid
+            return {"id": new_id, "name": name}
         finally:
             cur.close()
+   
+# def get_organization_by_slug(slug: str) -> dict | None:
+#     sql = """
+#         SELECT id, name, slug, created_at 
+#         FROM organizations 
+#         WHERE slug = %s
+#         """
+#     with get_db() as conn:
+#         cur = conn.cursor(dictionary=True)
+#         try:
+#             cur.execute(sql,(slug,),)
+#             return cur.fetchone()
+#         finally:
+#             cur.close()
 
 def list_organizations(limit: int = 50) -> list[dict]:
     sql = """

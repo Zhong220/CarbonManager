@@ -5,14 +5,16 @@ from flask_jwt_extended import (
 )
 # from werkzeug.security import generate_password_hash, check_password_hash
 from models.user_model import (
-    create_user, get_user_by_account, verify_password, 
-    generate_tokens, get_user_by_id
+    create_user, 
+    get_user_by_account, 
+    verify_password, 
+    generate_tokens, 
+    get_user_by_id
 )
 from models.organizations_model import (
     create_organization,
     assign_user_to_org,
-    get_organization_by_id,
-    get_organization_by_name
+    get_organization_by_name,
 )
 
 
@@ -25,25 +27,37 @@ def register():
     account = (data.get('account') or '').strip().lower()
     password = data.get('password')
     user_name = data.get('user_name')
-    user_type = data.get('user_type', 'customer')  # optional
-    
+    user_type = data.get('user_type', 'customer') 
+    user_type = (data.get('user_type') or 'customer').strip().lower()
+    org_name  = (data.get('org_name') or '').strip() if user_type == 'shop' else None
+
     if not account or not password or not user_name:
         return jsonify(error="account, password, and user_name are required"), 400
-
-    existing_user = get_user_by_account(account)
-    if existing_user:
+    if user_type not in ('customer', 'shop'):
+        return jsonify(error="invalid user_type"), 400
+    if user_type == 'shop' and not org_name:
+        return jsonify(error="org_name required for shop registration"), 400
+    if get_user_by_account(account):
         return jsonify(error="account already registered"), 409
 
-    # create_user should hash the password internally or return hash to store
-    user_id = create_user(account, password, user_name, user_type=user_type)
+    # Shop Owners 
+    org_id = None
+    if user_type == 'shop':
+        org = create_organization(org_name)
+        org_id = org['id']       
+         
+    # create_user 
+    user_id = create_user(account, password, user_name, user_type=user_type, organization_id=org_id)
     
-    # generate_tokens MUST set identity=user_id and put account in additional_claims
-    tokens = generate_tokens(user_id, account, user_type=user_type)
+    # tokens embed user_type + organization_id
+    tokens = generate_tokens(user_id, account, user_type=user_type, organization_id=org_id)
 
     return jsonify(
-        message="User registered successfully",
+        message="201: User registered successfully",
         access_token=tokens['access_token'],
-        refresh_token=tokens['refresh_token']
+        refresh_token=tokens['refresh_token'],
+        user_name=user_name,
+        user_type=user_type
     ), 201
 
 # -------- LOGIN --------
@@ -52,26 +66,27 @@ def login():
     data = request.get_json(force=True)
     account = (data.get('account') or '').strip().lower()
     password = data.get('password')
-
     if not account or not password:
         return jsonify(error="account and password required"), 400
 
     user = get_user_by_account(account)
     if not user:
         return jsonify(error="invalid credentials"), 401
-
+    
     # Expect user to include 'password_hash'
     if not verify_password(user['password_hash'], password):
         return jsonify(error="invalid credentials"), 401
 
-    tokens = generate_tokens(user['id'], account, user_type=user.get('user_type', 'customer'))
+    tokens = generate_tokens(user['id'], account, 
+                             user_type=user['user_type'], 
+                             organization_id=user['organization_id'] )
     return jsonify(
-        message="Login successful",
+        message="200: Login successful",
         access_token=tokens['access_token'],
         refresh_token=tokens['refresh_token']
     ), 200
 
-# -------- REFRESH (new access token) --------
+# -------- REFRESH: new access token --------
 @auth_bp.post('/refresh')
 @jwt_required(refresh=True)
 def refresh():
@@ -88,7 +103,7 @@ def refresh():
     )
     return jsonify(access_token=new_access), 200
 
-# -------- ME: needs token from login (see the current logged in user) --------
+# -------- ME: see the current logged in user --------
 @auth_bp.get('/me')
 @jwt_required()
 def me():
@@ -99,7 +114,7 @@ def me():
     user.pop('password_hash', None)
     return jsonify(user), 200
 
-# ------- PUT: Update user info (user type and org only for now) -------
+# ------- ME: Update user info -------
 @auth_bp.put('/me')
 @jwt_required()
 def update_me():    
@@ -119,22 +134,3 @@ def update_me():
         assign_user_to_org(user_id, org['id'])
     return jsonify(message="user updated"), 200
     
-# -------- Register organization --------
-@auth_bp.post('/organization')
-def register_organization():
-    data = request.get_json(force=True)
-    name = (data.get("name") or "").strip()
-    slug = (data.get("slug") or "").strip() or None
-    if not name:
-        return jsonify(error="name is required"), 400
-    if len(name) > 100:
-        return jsonify(error="name must be at most 100 characters"), 400
-    if slug and len(slug) > 50:
-        return jsonify(error="slug must be at most 50 characters"), 400
-
-    try:
-        org_id = create_organization(name=name, slug=slug)
-        org = get_organization_by_id(org_id)
-        return jsonify(org), 201
-    except Exception as e:
-        return jsonify(error="Error creating organization", detail=str(e)), 500

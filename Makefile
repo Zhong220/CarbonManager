@@ -16,13 +16,22 @@ BACKEND_SVC?=backend
 DB_CONTAINER?=carbon-mysql         # container_name (matches docker-compose.yml)
 DB_ROOT?=root
 DB_HOST_IN_CONTAINER?=127.0.0.1    # for mysqladmin ping inside container
-
+URL=http://127.0.0.1:5001
 
 # --- Utility ---
 help: ## Show available make commands
 	@echo "Usage: make <target>\n"
-	@grep -E '^[a-zA-Z0-9_.-]+:.*?## ' $(MAKEFILE_LIST) --no-filename | \
+	@grep -E '^[a-zA-Z0-9_.%/-]+:.*?## ' $(MAKEFILE_LIST) --no-filename | \
 	awk 'BEGIN {FS=":.*?## " } {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
+open-site:
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		open $(URL); \
+	elif [ "$$(uname)" = "Linux" ]; then \
+		xdg-open $(URL); \
+	else \
+		start $(URL); \
+	fi
 
 # ========== DB lifecycle ==========
 up-db: ## Start MySQL (db service) and wait until healthy
@@ -63,18 +72,34 @@ migrations-status: ## Show applied migrations in schema_migrations table
 	  -e "SELECT id, filename, applied_at FROM schema_migrations ORDER BY id;"
 
 # ========== Backend ==========
-up-backend: ## Start Flask backend
-	docker compose up -d $(BACKEND_SVC)
-	@echo "Backend at http://localhost:5001"
+
 rebuild: ## Rebuild backend image without cache
 	docker compose build --no-cache $(BACKEND_SVC)
+
+
+wait-backend: ## Wait until backend responds 200 OK
+	@echo "⏳ Waiting for backend at $(URL)..."
+	@for i in $$(seq 1 30); do \
+	  code=$$(curl -s -o /dev/null -w "%{http_code}" "$(URL)/health" || true); \
+	  if [ "$$code" = "200" ]; then echo "✅ Backend is ready"; exit 0; fi; \
+	  sleep 1; \
+	done; \
+	echo "❌ Backend did not become ready in time"; exit 1
+
+up-backend: ## Start Flask backend
+	docker compose up -d $(BACKEND_SVC)
+	@echo "Backend at $(URL)"
+	$(MAKE) wait-backend
+	$(MAKE) open-site
+	
 logs: ## Tail backend logs
-	docker compose logs -f $(BACKEND_SVC)
+	docker compose logs -f $(BACKEND_SVC) &
+	$(MAKE) open-site
 
 # ========== One-shot flows ==========
 up: down up-db migrate up-backend ## Start clean: fix networks -> DB -> migrations -> backend
 	@echo "🚀 All services are up"
-
+	$(MAKE) open-site
 down: ## Stop all services
 	docker compose down
 
@@ -99,7 +124,7 @@ show-tables: ## List tables
 	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "SHOW TABLES;"
 
-desc-%: ## Describe table (usage: make desc-emissions)
+desc-%: ## Show schema of table (Replace % with table name: make desc-table)
 	docker compose exec $(DB_SVC) \
 	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "DESC $*;"
@@ -107,9 +132,8 @@ desc-%: ## Describe table (usage: make desc-emissions)
 
 
 # ========== Health / Tests ==========
-test: ## Test backend endpoints (/health and /debug/db-ping)
+test: ## Test backend endpoints (/health)
 	@curl -s http://localhost:5001/health | jq .
-	@curl -s http://localhost:5001/debug/db-ping | jq .
 
 
 
@@ -122,3 +146,26 @@ show-seed-emission: ## Show seed emission(s)
 	docker compose exec $(DB_SVC) \
 	  mysql -N -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "SELECT id, name, product_id, stage_id FROM emissions ORDER BY id DESC LIMIT 5;"
+
+# ========== CI Backend ==========
+.PHONY: 
+
+be-format: ## Auto-format (ruff imports + black)
+	cd backend && ruff check . --fix
+	cd backend && python -m black .
+
+be-lint: ## Lint (ruff + black check)
+	cd backend && ruff check .
+	cd backend && python -m black --check .
+
+be-test:
+	cd backend && pytest -q
+
+be-fix: ## Auto-fix
+	cd backend && ruff check . --fix
+	cd backend && python -m black .
+	$(MAKE) be-lint
+
+.PHONY: be-setup
+be-setup: ## Install backend dev deps
+  cd backend && pip install -r requirements.txt -r requirements-dev.txt

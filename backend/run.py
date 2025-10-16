@@ -6,7 +6,7 @@ import webbrowser
 import os
 from db_connection import get_db
 from dotenv import load_dotenv  
-
+from flask_cors import CORS
 from routes.onchain import onchain_bp
 from routes.auth import auth_bp
 from routes.product_types import product_types_bp
@@ -59,9 +59,8 @@ def create_app(config_class=Config):
     return app
 
 app = create_app()
+CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:5001", "http://localhost:5000"]}})
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000) # Listening on port 5000 inside the container
-    # Auto open swagger UI in browser
-    # webbrowser.open('http://localhost:5000/docs')
+    app.run(debug=True, host='0.0.0.0', port=5000 ) # Listening on port 5000 inside the container
     
