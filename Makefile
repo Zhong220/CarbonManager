@@ -21,7 +21,7 @@ URL=http://127.0.0.1:5001
 # --- Utility ---
 help: ## Show available make commands
 	@echo "Usage: make <target>\n"
-	@grep -E '^[a-zA-Z0-9_.-]+:.*?## ' $(MAKEFILE_LIST) --no-filename | \
+	@grep -E '^[a-zA-Z0-9_.%/-]+:.*?## ' $(MAKEFILE_LIST) --no-filename | \
 	awk 'BEGIN {FS=":.*?## " } {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 open-site:
@@ -124,7 +124,7 @@ show-tables: ## List tables
 	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "SHOW TABLES;"
 
-desc-%: ## Describe table (usage: make desc-emissions)
+desc-%: ## Show schema of table (Replace % with table name: make desc-table)
 	docker compose exec $(DB_SVC) \
 	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "DESC $*;"
