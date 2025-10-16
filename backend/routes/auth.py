@@ -5,15 +5,16 @@ from flask_jwt_extended import (
 )
 # from werkzeug.security import generate_password_hash, check_password_hash
 from models.user_model import (
-    create_user, get_user_by_account, verify_password, 
-    generate_tokens, get_user_by_id
+    create_user, 
+    get_user_by_account, 
+    verify_password, 
+    generate_tokens, 
+    get_user_by_id
 )
 from models.organizations_model import (
     create_organization,
     assign_user_to_org,
-    get_organization_by_id,
     get_organization_by_name,
-    list_organizations
 )
 
 
@@ -39,21 +40,18 @@ def register():
     if get_user_by_account(account):
         return jsonify(error="account already registered"), 409
 
-    
     # Shop Owners 
     org_id = None
     if user_type == 'shop':
         org = create_organization(org_name)
         org_id = org['id']       
          
-        
     # create_user 
     user_id = create_user(account, password, user_name, user_type=user_type, organization_id=org_id)
     
     # tokens embed user_type + organization_id
     tokens = generate_tokens(user_id, account, user_type=user_type, organization_id=org_id)
 
-   
     return jsonify(
         message="201: User registered successfully",
         access_token=tokens['access_token'],
@@ -88,7 +86,7 @@ def login():
         refresh_token=tokens['refresh_token']
     ), 200
 
-# -------- REFRESH (new access token) --------
+# -------- REFRESH: new access token --------
 @auth_bp.post('/refresh')
 @jwt_required(refresh=True)
 def refresh():
@@ -105,7 +103,7 @@ def refresh():
     )
     return jsonify(access_token=new_access), 200
 
-# -------- ME: needs token from login (see the current logged in user) --------
+# -------- ME: see the current logged in user --------
 @auth_bp.get('/me')
 @jwt_required()
 def me():
@@ -116,7 +114,7 @@ def me():
     user.pop('password_hash', None)
     return jsonify(user), 200
 
-# ------- PUT: Update user info (user type and org only for now) -------
+# ------- ME: Update user info -------
 @auth_bp.put('/me')
 @jwt_required()
 def update_me():    
