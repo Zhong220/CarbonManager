@@ -35,6 +35,8 @@ services:
       DB_USER: ${MYSQL_USER}
       DB_PASSWORD: ${MYSQL_PASSWORD}
       DB_NAME: ${MYSQL_DATABASE}
+    volumes:
+      - ./database:/app/database
     restart: "no"
     volumes:
       - ./database:/app/database
@@ -56,7 +58,7 @@ services:
       - "5001:5000"
     volumes:
       - ./backend:/app
-      - ./scripts:/app/scripts
+      # - ./scripts:/app/scripts
     command: ["python", "run.py"]
     restart: unless-stopped
     networks:
