@@ -80,6 +80,5 @@ def main(target: str | None = None):
     cur.close(); conn.close()
 
 if __name__ == "__main__":
-    # optional: allow `python migrate.py 003_seed_tags.sql`
     target = sys.argv[1] if len(sys.argv) > 1 else None
     main(target)
