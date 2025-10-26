@@ -1,6 +1,5 @@
--- SET FOREIGN_KEY_CHECKS = 1;
--- 002_add_emission_name.sql
--- Add user-defined name to emissions; relax optional columns on factors.
+-- -- 002_add_null.sql
+-- -- Add user-defined name to emissions; relax optional columns on factors.
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
