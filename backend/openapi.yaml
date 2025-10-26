@@ -264,8 +264,6 @@ paths:
                       type: integer
                     name:
                       type: string
-                    description:
-                      type: string
         "500":
           description: Server error
     post:
