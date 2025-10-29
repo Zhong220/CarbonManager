@@ -7,12 +7,9 @@ import * as S from "./WelcomePage.styles";
 import RoleDropdown from "@/ui/components/RoleDropdown";
 import { useNavigate } from "react-router-dom";
 
-import {
-  createAccount,
-  verifyLogin,
-  setAccount, // ✅ 改成 setAccount
-  Role,
-} from "@/utils/storage";
+// 只保留 Role 型別；登入/註冊改走 UserContext
+import { Role } from "@/utils/storage";
+import { useUser } from "@/context/UserContext";
 
 export default function WelcomePage() {
   const [open, setOpen] = useState<null | "login" | "signup">(null);
@@ -69,17 +66,23 @@ function LoginForm({ onDone }: { onDone: () => void }) {
   const [account, setAcc] = useState("");
   const [password, setPwd] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { login } = useUser();
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!verifyLogin(account, password)) {
-      setError("帳號或密碼錯誤");
-      return;
+    setError("");
+    setLoading(true);
+    try {
+      await login(account, password);
+      onDone();
+      navigate("/products");
+    } catch (err: any) {
+      setError(err?.message || "登入失敗");
+    } finally {
+      setLoading(false);
     }
-    setAccount(account); // ✅ 改成 setAccount
-    onDone();
-    navigate("/products");
   }
 
   return (
@@ -93,6 +96,7 @@ function LoginForm({ onDone }: { onDone: () => void }) {
           value={account}
           onChange={(e) => setAcc(e.target.value)}
           placeholder="請輸入帳號"
+          autoComplete="username"
         />
       </Field>
       <Field>
@@ -103,14 +107,17 @@ function LoginForm({ onDone }: { onDone: () => void }) {
           value={password}
           onChange={(e) => setPwd(e.target.value)}
           placeholder="請輸入密碼"
+          autoComplete="current-password"
         />
       </Field>
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
       <FormActions>
-        <GhostButton type="button" onClick={onDone}>
+        <GhostButton type="button" onClick={onDone} disabled={loading}>
           取消
         </GhostButton>
-        <PrimaryButton type="submit">登入</PrimaryButton>
+        <PrimaryButton type="submit" disabled={loading}>
+          {loading ? "處理中..." : "登入"}
+        </PrimaryButton>
       </FormActions>
     </form>
   );
@@ -122,11 +129,15 @@ function SignupForm({ onDone }: { onDone: () => void }) {
   const [password, setPwd] = useState("");
   const [confirmPwd, setConfirmPwd] = useState("");
   const [role, setRole] = useState<Role>("Farmer");
-  const [shopName, setShopName] = useState(""); // 茶行名稱
+  const [shopName, setShopName] = useState(""); // 茶行名稱（Farmer 才需要）
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const { signup } = useUser();
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError("");
+
     if (password !== confirmPwd) {
       setError("兩次輸入的密碼不一致");
       return;
@@ -135,12 +146,15 @@ function SignupForm({ onDone }: { onDone: () => void }) {
       setError("請輸入茶行名稱");
       return;
     }
+
+    setLoading(true);
     try {
-      createAccount(account, password, role);
-      setAccount(account); // ✅ 註冊完就設定當前帳號
-      onDone();
+      await signup({ account, password, role, shopName });
+      onDone(); // 註冊完成後先關閉視窗；若要直接導頁可在這裡 navigate
     } catch (err: any) {
-      setError(err.message || "註冊失敗");
+      setError(err?.message || "註冊失敗");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -155,6 +169,7 @@ function SignupForm({ onDone }: { onDone: () => void }) {
           value={account}
           onChange={(e) => setAcc(e.target.value)}
           placeholder="請輸入帳號"
+          autoComplete="username"
         />
       </Field>
       <Field>
@@ -165,6 +180,7 @@ function SignupForm({ onDone }: { onDone: () => void }) {
           value={password}
           onChange={(e) => setPwd(e.target.value)}
           placeholder="請輸入密碼"
+          autoComplete="new-password"
         />
       </Field>
       <Field>
@@ -175,6 +191,7 @@ function SignupForm({ onDone }: { onDone: () => void }) {
           value={confirmPwd}
           onChange={(e) => setConfirmPwd(e.target.value)}
           placeholder="再次輸入密碼"
+          autoComplete="new-password"
         />
       </Field>
       <Field>
@@ -195,12 +212,14 @@ function SignupForm({ onDone }: { onDone: () => void }) {
         </Field>
       )}
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      {error && <p style={{ color: "crimson" }}>{error}</p>}
       <FormActions>
-        <GhostButton type="button" onClick={onDone}>
+        <GhostButton type="button" onClick={onDone} disabled={loading}>
           取消
         </GhostButton>
-        <PrimaryButton type="submit">建立帳號</PrimaryButton>
+        <PrimaryButton type="submit" disabled={loading}>
+          {loading ? "建立中..." : "建立帳號"}
+        </PrimaryButton>
       </FormActions>
     </form>
   );

@@ -103,16 +103,13 @@ export const PrimaryBtn = styled.button`
 `;
 
 export const SecondaryBtn = styled.button`
-  background: #f8f8f8;
-  border: 1px solid #ddd;
-  color: #333;
-  padding: 8px 14px;
-  border-radius: 8px;
-  cursor: pointer;
+  background: #f3f5f1;
+  border-color: #dfe6da;
+  color: #2b3a24;
   font-weight: 500;
 
   &:hover {
-    background: #eee;
+    background: #e9eee8;
   }
 `;
 
@@ -136,20 +133,4 @@ export const Fab = styled.button`
   }
 `;
 
-export const ActionBtn = styled.button`
-  font-size: 12px;
-  line-height: 1.2;
-  padding: 6px 12px;
-  border: 1px solid #ccd6cc;
-  border-radius: 8px;
-  background: #fff;
-  color: #2c3e2c;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-
-  &:hover {
-    background: #f5f5f5;
-  }
-`;
+export const ActionBtn = styled(SecondaryBtn)``;

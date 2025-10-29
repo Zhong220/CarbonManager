@@ -1,3 +1,4 @@
+// frontend_v2\src\utils\lifecycleTypes.ts
 // 固定階段（不可增刪改名）
 export type FixedStageId = "raw" | "manufacture" | "distribution" | "use" | "disposal";
 

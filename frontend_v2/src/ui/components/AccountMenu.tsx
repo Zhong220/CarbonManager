@@ -3,6 +3,7 @@ import React, { useRef, useState } from "react";
 import DropdownMenu from "@/ui/components/DropdownMenu";
 import { getAccount, softLogout, deleteAccount } from "@/utils/storage";
 import { useNavigate } from "react-router-dom";
+import { WhiteButton } from "@/ui/primitives/Button";
 
 export default function AccountMenu() {
   const navigate = useNavigate();
@@ -16,13 +17,15 @@ export default function AccountMenu() {
       softLogout();
     } finally {
       setOpen(false);
-      navigate("/", { replace: true }); // 回到歡迎頁
+      navigate("/", { replace: true });
     }
   };
 
   const handleDelete = () => {
     if (!acc) return;
-    const ok1 = confirm("確定要刪除此帳號嗎？此動作將刪除此帳號底下的商店、商品、紀錄與分類，無法復原。");
+    const ok1 = confirm(
+      "確定要刪除此帳號嗎？此動作將刪除此帳號底下的商店、商品、紀錄與分類，無法復原。"
+    );
     if (!ok1) return;
     const ok2 = confirm("再次確認：真的要永久刪除此帳號嗎？");
     if (!ok2) return;
@@ -41,32 +44,20 @@ export default function AccountMenu() {
 
   return (
     <div style={{ position: "relative", display: "inline-block" }}>
-      <button
+      {/* ✅ 用 GhostButton，會繼承 ButtonBase 的高度/排版，不截字 */}
+      <WhiteButton
         ref={btnRef}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        // 🔶 與「分類管理」一致的尺寸與字型
-        style={{
-          fontSize: 14,
-          lineHeight: 1.4,
-          padding: "6px 14px",
-          border: "1px solid #ccd6cc",
-          borderRadius: 8,
-          background: "#fff",
-          color: "#2c3e2c",
-          cursor: "pointer",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          userSelect: "none",
-        }}
+        style={{ gap: 6 }}
       >
-        ☰ 帳號
-      </button>
+        <span aria-hidden>☰</span>
+        <span>帳號</span>
+      </WhiteButton>
 
       <DropdownMenu
         anchorRef={{ current: btnRef.current }}

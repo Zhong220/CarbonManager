@@ -1,4 +1,3 @@
-// src/ui/components/CategoryManager.tsx
 import React, { useEffect, useState } from "react";
 import styled from "styled-components";
 import Modal from "@/ui/components/Modal";
@@ -8,7 +7,6 @@ import {
   renameCategory,
   deleteCategoryAndUnassign,
   moveCategory,
-  setProductCategory,
   getCurrentShopIdSafe,
   Category,
 } from "@/utils/storage";
@@ -74,7 +72,7 @@ export default function CategoryManager({ open, onClose }: Props) {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
           />
-          <BtnPrimary type="submit" small>
+          <BtnPrimary type="submit" $small>
             新增
           </BtnPrimary>
         </AddRow>
@@ -102,12 +100,12 @@ export default function CategoryManager({ open, onClose }: Props) {
                           onChange={(e) => setEditingName(e.target.value)}
                           onKeyDown={(e) => e.key === "Enter" && confirmEdit()}
                         />
-                        <BtnPrimary type="submit" small>
+                        <BtnPrimary type="submit" $small>
                           儲存
                         </BtnPrimary>
                         <BtnSecondary
                           type="button"
-                          small
+                          $small
                           onClick={() => {
                             setEditingId(null);
                             setEditingName("");
@@ -147,10 +145,10 @@ export default function CategoryManager({ open, onClose }: Props) {
                         ↓
                       </IconBtn>
 
-                      <BtnSecondary small onClick={() => startEdit(c)}>
+                      <BtnSecondary $small onClick={() => startEdit(c)}>
                         改名
                       </BtnSecondary>
-                      <BtnDanger small onClick={() => handleDelete(c.id)}>
+                      <BtnDanger $small onClick={() => handleDelete(c.id)}>
                         刪除
                       </BtnDanger>
                     </Actions>
@@ -258,11 +256,15 @@ const Input = styled.input`
   box-sizing: border-box;
 `;
 
-const BaseBtn = styled.button<{ small?: boolean }>`
+/* 按鈕們（使用暫態屬性，避免傳到 DOM） */
+const BaseBtn = styled.button.withConfig({
+  shouldForwardProp: (prop) => prop !== 'small' && prop !== '$small',
+})<{ $small?: boolean }>`
   border: none;
   border-radius: 10px;
-  padding: ${({ small }) => (small ? "6px 10px" : "8px 12px")};
-  font-size: ${({ small }) => (small ? "13px" : "14px")};
+  height: ${({ $small }) => ($small ? "32px" : "40px")};
+  padding: 0 ${({ $small }) => ($small ? "10px" : "16px")};
+  font-size: 14px;
   cursor: pointer;
   white-space: nowrap;
 `;
@@ -274,13 +276,15 @@ const BtnPrimary = styled(BaseBtn)`
 `;
 
 const BtnSecondary = styled(BaseBtn)`
-  background: #eef4ee;
-  color: #2c3e2c;
+  background: #fff;
+  color: #203319;
+  border: 1px solid #dfe6da;
 `;
 
 const BtnDanger = styled(BaseBtn)`
-  background: #ffecec;
+  background: #fff;
   color: #b00020;
+  border: 1px solid #ef9a9a;
 `;
 
 const IconBtn = styled.button<{ disabled?: boolean }>`

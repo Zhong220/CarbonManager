@@ -1,5 +1,8 @@
-// frontend/src/utils/storage.ts
-// Multi-tenant localStorage helper (pure frontend)
+// storage.ts
+// ===============================================================
+// Types & Imports
+// ===============================================================
+import { FIXED_STAGE_TEMPLATES, StageConfig, LifeRecord } from "./lifecycleTypes";
 
 export type Role = "Farmer" | "Consumer" | "None";
 
@@ -16,9 +19,11 @@ export interface TeaShop {
   owner: string;
 }
 
+// 字串型不可回收主鍵 + serialNo（UI 顯示用可補洞）
 export interface Product {
-  id: number;
+  id: string;         // e.g. "prod_3q9f..."（永不回收）
   name: string;
+  serialNo?: number;  // UI 友善連號
   categoryId?: string | null;
 }
 
@@ -37,20 +42,52 @@ export interface NoteItem {
   updatedAt: number;
 }
 
-// ---------- Keys ----------
-const ACCOUNTS_KEY   = "accounts_meta";
-const SHOPS_KEY      = "shops_map";
-const CURR_ACC_KEY   = "account";
-const CURR_ROLE_KEY  = "role";
-const CURR_SHOP_KEY  = "currentShopId";
+// ===============================================================
+// Keys & Constants
+// ===============================================================
+const ACCOUNTS_KEY = "accounts_meta";
+const SHOPS_KEY    = "shops_map";
+const CURR_ACC_KEY = "account";
+const CURR_ROLE_KEY= "role";
+const CURR_SHOP_KEY= "currentShopId";
 
-// 預設（安全）Shop Id（當使用者尚未選店家時，資料會寫在這個命名空間下）
 export const DEFAULT_SHOP_ID = "__default_shop__";
 
-// ---------- Utils ----------
+const MAX_RECENT_CATS = 12;
+
+// ===============================================================
+// Storage Port（抽象層）
+// ===============================================================
+interface StoragePort {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+  keys(): string[];
+}
+
+class LocalStoragePort implements StoragePort {
+  getItem(key: string) { return localStorage.getItem(key); }
+  setItem(key: string, value: string) { localStorage.setItem(key, value); }
+  removeItem(key: string) { localStorage.removeItem(key); }
+  keys() {
+    const ks: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k) ks.push(k);
+    }
+    return ks;
+  }
+}
+
+// 目前用 localStorage，未來要換 IndexedDB / 後端，只要換這裡
+const storage: StoragePort = new LocalStoragePort();
+
+// ===============================================================
+// Utils
+// ===============================================================
 function loadJSON<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = storage.getItem(key);
     if (!raw) return fallback;
     return JSON.parse(raw) ?? fallback;
   } catch {
@@ -58,573 +95,1199 @@ function loadJSON<T>(key: string, fallback: T): T {
   }
 }
 function saveJSON(key: string, value: any) {
-  localStorage.setItem(key, JSON.stringify(value));
+  storage.setItem(key, JSON.stringify(value));
 }
 const uniq = <T,>(arr: T[]) => Array.from(new Set(arr));
+const isBlank = (s?: string | null) => !s || String(s).trim() === "";
+const hasValue = (s?: string | null) => !isBlank(s);
 
-// 取得一個「一定不為空」的 shopId（優先順序：參數 > 現在選擇 > 預設）
+// shopId：參數 > 目前選擇 > 預設
 function ensureShopId(input?: string): string {
-  const sid = input ?? getCurrentShopId() ?? DEFAULT_SHOP_ID;
+  const sid = input ?? AuthStore.getCurrentShopId() ?? DEFAULT_SHOP_ID;
   return sid;
 }
 export const getCurrentShopIdSafe = () => ensureShopId();
 
-export const getAccount = () => localStorage.getItem(CURR_ACC_KEY) || "";
-export const setAccount = (v: string) => localStorage.setItem(CURR_ACC_KEY, v);
-export const clearAccount = () => localStorage.removeItem(CURR_ACC_KEY);
+// 產 uid（URL-safe）
+function uid(prefix = ""): string {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let id = "";
+  for (let i = 0; i < b.length; i++) id += chars[b[i] & 63];
+  return prefix ? `${prefix}_${id}` : id;
+}
 
-export const getRole = (): Role => (localStorage.getItem(CURR_ROLE_KEY) as Role) || "None";
-export const setRole = (v: string) => localStorage.setItem(CURR_ROLE_KEY, v);
+// 允許 number|string，最後統一成字串 pid
+function normalizePid(pid: number | string): string {
+  if (typeof pid === "number") return String(pid);
+  return String(pid || "").trim();
+}
 
-export const getCurrentShopId = () => localStorage.getItem(CURR_SHOP_KEY);
-export const setCurrentShopId = (id: string) => {
-  localStorage.setItem(CURR_SHOP_KEY, id);
-  const acc = getAccount();
-  if (!acc) return;
-  const metas = getAccountsMeta();
-  if (metas[acc]) {
-    metas[acc].currentShopId = id;
-    saveAccountsMeta(metas);
-  }
+// ===============================================================
+// Key Helpers（命名空間）
+// ===============================================================
+const Key = {
+  products: (shopId: string) => `shop_${shopId}_products`,
+  records:  (shopId: string, pid: string) => `shop_${shopId}_records_${pid}`,
+  categories:(shopId: string) => `shop_${shopId}_categories`,
+  recentCats:(shopId: string) => `shop_${shopId}_recent_cat_ids`,
+  stageCfg:  (shopId: string, productId: string) => `stage_config:${shopId}:${productId}`,
+  stepOrder: (shopId: string, productId: string, stageId: string) =>
+    `step_order:${shopId}:${productId}:${stageId}`,
+  notes: (acc: string) => `notes_${acc}`,
 };
 
-// ---------- 帳號 CRUD ----------
-export const getAccountsMeta = (): Record<string, AccountMeta> =>
-  loadJSON<Record<string, AccountMeta>>(ACCOUNTS_KEY, {});
-export const saveAccountsMeta = (obj: Record<string, AccountMeta>) =>
-  saveJSON(ACCOUNTS_KEY, obj);
+// ===============================================================
+// 封裝區（Stores / Services）
+// ===============================================================
 
-export function accountExists(account: string): boolean {
-  const metas = getAccountsMeta();
-  return !!metas[account];
-}
+// -------- AuthStore -----------------------------------------------------------
+const LEGACY_CURR_ACC_KEY = "current_account";
 
-export function createAccount(account: string, password: string, role: Role = "None") {
-  const metas = getAccountsMeta();
-  if (metas[account]) throw new Error("帳號已存在");
-  metas[account] = { role, password, shopIds: [] };
-  saveAccountsMeta(metas);
-}
+const AuthStore = {
+  getAccount(): string { return storage.getItem(CURR_ACC_KEY) || ""; },
+  setAccount(v: string) { storage.setItem(CURR_ACC_KEY, v); },
+  clearAccount() { storage.removeItem(CURR_ACC_KEY); },
 
-export function verifyLogin(account: string, password: string): boolean {
-  const metas = getAccountsMeta();
-  const meta = metas[account];
-  if (!meta) return false;
-  return meta.password === password;
-}
+  getRole(): Role { return (storage.getItem(CURR_ROLE_KEY) as Role) || "None"; },
+  setRole(v: Role) { storage.setItem(CURR_ROLE_KEY, v); },
 
-export function setRoleOf(account: string, role: Role) {
-  const metas = getAccountsMeta();
-  if (!metas[account]) return;
-  metas[account].role = role;
-  saveAccountsMeta(metas);
-}
+  getCurrentShopId(): string | null { return storage.getItem(CURR_SHOP_KEY); },
+  setCurrentShopId(id: string) {
+    storage.setItem(CURR_SHOP_KEY, id);
+    const acc = AuthStore.getAccount();
+    if (!acc) return;
+    const metas = AccountStore.getAccountsMeta();
+    if (metas[acc]) {
+      metas[acc].currentShopId = id;
+      AccountStore.saveAccountsMeta(metas);
+    }
+  },
 
-// ========= 最近分類（依 shop 儲存）& 工具 =========
-const MAX_RECENT_CATS = 12;
-function keyRecentCats(shopId: string) { return `shop_${shopId}_recent_cat_ids`; }
+  softLogout() {
+    storage.removeItem(CURR_ACC_KEY);
+    storage.removeItem(CURR_ROLE_KEY);
+    storage.removeItem(CURR_SHOP_KEY);
+  },
 
-export function getRecentCategoryIds(shopId?: string): string[] {
-  const sid = ensureShopId(shopId);
-  try {
-    return JSON.parse(localStorage.getItem(keyRecentCats(sid)) || "[]");
-  } catch {
-    return [];
-  }
-}
+  migrateLegacyAuthKeys() {
+    try {
+      const legacy = storage.getItem(LEGACY_CURR_ACC_KEY);
+      if (legacy && !storage.getItem(CURR_ACC_KEY)) {
+        storage.setItem(CURR_ACC_KEY, legacy);
+      }
+      if (legacy) storage.removeItem(LEGACY_CURR_ACC_KEY);
 
-export function pushRecentCategoryId(catId: string | null | undefined, shopId?: string) {
-  const sid = ensureShopId(shopId);
-  if (!catId) return; // 不記錄「全部/未分類」
-  const cur = getRecentCategoryIds(sid);
-  const next = [catId, ...cur.filter(id => id !== catId)].slice(0, MAX_RECENT_CATS);
-  localStorage.setItem(keyRecentCats(sid), JSON.stringify(next));
-}
+      // 修正 None 角色
+      const acc = AuthStore.getAccount();
+      const meta = acc ? AccountStore.getAccountsMeta()[acc] : undefined;
+      const currentRole = AuthStore.getRole();
+      if (acc && meta && currentRole === "None" && meta.role && meta.role !== "None") {
+        AuthStore.setRole(meta.role);
+      }
+    } catch (e) {
+      console.warn("[migrateLegacyAuthKeys] error:", e);
+    }
+  },
+};
 
-/** 徹底清空一個 shop 的所有資料（產品、紀錄、分類、最近分類） */
-function clearShopAllData(shopId: string) {
-  const prodKey = keyProducts(shopId);
-  const products: Product[] = loadJSON<Product[]>(prodKey, []);
-  // 刪每個產品的紀錄
-  products.forEach(p => {
-    localStorage.removeItem(keyRecords(shopId, p.id));
-  });
-  // 刪產品清單 / 分類 / 最近分類
-  localStorage.removeItem(prodKey);
-  localStorage.removeItem(keyCategories(shopId));
-  localStorage.removeItem(keyRecentCats(shopId));
-}
+// -------- AccountStore --------------------------------------------------------
+const AccountStore = {
+  getAccountsMeta(): Record<string, AccountMeta> {
+    return loadJSON<Record<string, AccountMeta>>(ACCOUNTS_KEY, {});
+  },
+  saveAccountsMeta(obj: Record<string, AccountMeta>) {
+    saveJSON(ACCOUNTS_KEY, obj);
+  },
+  exists(account: string): boolean {
+    return !!AccountStore.getAccountsMeta()[account];
+  },
+  create(account: string, password: string, role: Role = "None") {
+    const metas = AccountStore.getAccountsMeta();
+    if (metas[account]) throw new Error("帳號已存在");
+    metas[account] = { role, password, shopIds: [] };
+    AccountStore.saveAccountsMeta(metas);
+  },
+  verifyLogin(account: string, password: string): boolean {
+    const meta = AccountStore.getAccountsMeta()[account];
+    return !!meta && meta.password === password;
+  },
+  setRoleOf(account: string, role: Role) {
+    const metas = AccountStore.getAccountsMeta();
+    if (!metas[account]) return;
+    metas[account].role = role;
+    AccountStore.saveAccountsMeta(metas);
+  },
+  getAllIds(): string[] {
+    try { return Object.keys(AccountStore.getAccountsMeta() || {}); } catch { return []; }
+  },
+};
 
-export function deleteAccount(account: string) {
-  const metas = getAccountsMeta();
-  const meta  = metas[account];
-  if (!meta) return;
+// -------- ShopStore -----------------------------------------------------------
+const ShopStore = {
+  getMap(): Record<string, TeaShop> {
+    return loadJSON<Record<string, TeaShop>>(SHOPS_KEY, {});
+  },
+  saveMap(obj: Record<string, TeaShop>) { saveJSON(SHOPS_KEY, obj); },
 
-  // 刪除此帳號名下所有商店（含其內全部資料）
-  (meta.shopIds || []).forEach(id => deleteShop(id));
+  isNameTaken(name: string): boolean {
+    return Object.values(ShopStore.getMap()).some(s => s.name === name);
+  },
 
-  // 刪記事
-  localStorage.removeItem(notesKey(account));
+  create(name: string, owner: string): TeaShop {
+    const shops = ShopStore.getMap();
+    if (ShopStore.isNameTaken(name)) throw new Error("茶行名稱已被使用");
 
-  // 若此帳號曾在「預設空間」留下資料，一併清掉
-  clearShopAllData(DEFAULT_SHOP_ID);
+    const id = "shop_" + Date.now();
+    shops[id] = { id, name, owner };
+    ShopStore.saveMap(shops);
 
-  // 從帳號清單移除
-  delete metas[account];
-  saveAccountsMeta(metas);
+    const metas = AccountStore.getAccountsMeta();
+    const meta: AccountMeta = metas[owner] ?? { role: "Farmer" };
+    meta.shopIds = uniq([...(meta.shopIds ?? []), id]);
+    meta.currentShopId = id;
+    metas[owner] = meta;
+    AccountStore.saveAccountsMeta(metas);
 
-  // 若當前登入就是這個帳號，清掉登入狀態
-  if (getAccount() === account) softLogout();
-}
+    AuthStore.setCurrentShopId(id);
+    return shops[id];
+  },
 
-// ---------- 茶行 CRUD ----------
-export const getShopsMap = (): Record<string, TeaShop> =>
-  loadJSON<Record<string, TeaShop>>(SHOPS_KEY, {});
-export const saveShopsMap = (obj: Record<string, TeaShop>) =>
-  saveJSON(SHOPS_KEY, obj);
+  delete(shopId: string) {
+    const shops = ShopStore.getMap();
+    const shop  = shops[shopId];
+    if (!shop) return;
 
-export function isShopNameTaken(name: string): boolean {
-  const shops = getShopsMap();
-  return Object.values(shops).some(s => s.name === name);
-}
+    // 清掉此 shop 的所有資料
+    CleanupService.clearShopAllData(shopId);
 
-export function createShop(name: string, owner: string): TeaShop {
-  const shops = getShopsMap();
-  if (isShopNameTaken(name)) throw new Error("茶行名稱已被使用");
-
-  const id = "shop_" + Date.now();
-  shops[id] = { id, name, owner };
-  saveShopsMap(shops);
-
-  const metas = getAccountsMeta();
-  const meta: AccountMeta = metas[owner] ?? { role: "Farmer" };
-  meta.shopIds = uniq([...(meta.shopIds ?? []), id]);
-  meta.currentShopId = id;
-  metas[owner] = meta;
-  saveAccountsMeta(metas);
-
-  setCurrentShopId(id);
-  return shops[id];
-}
-
-export function deleteShop(shopId: string) {
-  const shops = getShopsMap();
-  const shop  = shops[shopId];
-  if (!shop) return;
-
-  // 先清掉此 shop 的所有資料
-  clearShopAllData(shopId);
-
-  // 從 owner 的 meta 移除
-  const metas = getAccountsMeta();
-  const ownerMeta = metas[shop.owner];
-  if (ownerMeta) {
-    ownerMeta.shopIds = (ownerMeta.shopIds || []).filter(id => id !== shopId);
-    if (ownerMeta.currentShopId === shopId) {
-      ownerMeta.currentShopId = ownerMeta.shopIds?.[0] || undefined;
-      if (getAccount() === shop.owner) {
-        if (ownerMeta.currentShopId) {
-          setCurrentShopId(ownerMeta.currentShopId);
-        } else {
-          localStorage.removeItem(CURR_SHOP_KEY);
+    // 從 owner 的 meta 移除
+    const metas = AccountStore.getAccountsMeta();
+    const ownerMeta = metas[shop.owner];
+    if (ownerMeta) {
+      ownerMeta.shopIds = (ownerMeta.shopIds || []).filter(id => id !== shopId);
+      if (ownerMeta.currentShopId === shopId) {
+        ownerMeta.currentShopId = ownerMeta.shopIds?.[0] || undefined;
+        if (AuthStore.getAccount() === shop.owner) {
+          if (ownerMeta.currentShopId) AuthStore.setCurrentShopId(ownerMeta.currentShopId);
+          else storage.removeItem(CURR_SHOP_KEY);
         }
       }
+      metas[shop.owner] = ownerMeta;
+      AccountStore.saveAccountsMeta(metas);
     }
-    metas[shop.owner] = ownerMeta;
-    saveAccountsMeta(metas);
-  }
 
-  // 從 shops_map 刪掉
-  delete shops[shopId];
-  saveShopsMap(shops);
-}
+    delete shops[shopId];
+    ShopStore.saveMap(shops);
+  },
 
-// ---------- 列表 ----------
-export function listMyShops(account: string): TeaShop[] {
-  const shops = getShopsMap();
-  return Object.values(shops).filter(s => s.owner === account);
-}
-export function listAllShops(): TeaShop[] {
-  return Object.values(getShopsMap());
-}
-
-// ---------- 產品 / 紀錄 ----------
-function keyProducts(shopId: string)   { return `shop_${shopId}_products`; }
-function keyRecords(shopId: string, pid: number | string) {
-  return `shop_${shopId}_records_${pid}`;
-}
-function keyCategories(shopId: string) {
-  return `shop_${shopId}_categories`;
-}
-
-export const loadProducts = (shopId?: string): Product[] => {
-  const sid = ensureShopId(shopId);
-  return loadJSON<Product[]>(keyProducts(sid), []);
-};
-export const saveProducts = (list: Product[], shopId?: string) => {
-  const sid = ensureShopId(shopId);
-  saveJSON(keyProducts(sid), list);
+  listMine(account: string): TeaShop[] {
+    return Object.values(ShopStore.getMap()).filter(s => s.owner === account);
+  },
+  listAll(): TeaShop[] { return Object.values(ShopStore.getMap()); },
 };
 
-export const loadRecords = (pid: number | string, shopId?: string) => {
-  const sid = ensureShopId(shopId);
-  return loadJSON<any[]>(keyRecords(sid, pid), []);
-};
-export const saveRecords = (pid: number | string, list: any[], shopId?: string) => {
-  const sid = ensureShopId(shopId);
-  saveJSON(keyRecords(sid, pid), list);
-};
+// -------- ProductStore & RecordStore -----------------------------------------
+const ProductStore = {
+  keyProducts: (sid: string) => Key.products(sid),
 
-// ---------- 分類相關 ----------
-function normalizeName(s: string) {
-  return (s ?? "").trim().toLowerCase();
-}
-function categoryNameTaken(list: Category[], name: string, excludeId?: string) {
-  const norm = normalizeName(name);
-  return list.some(c => normalizeName(c.name) === norm && c.id !== excludeId);
-}
+  load(shopId?: string): Product[] {
+    const sid = ensureShopId(shopId);
+    return loadJSON<Product[]>(Key.products(sid), []);
+  },
+  save(list: Product[], shopId?: string) {
+    const sid = ensureShopId(shopId);
+    saveJSON(Key.products(sid), list);
+  },
 
-// 載入/儲存分類
-export function loadCategories(shopId: string): Category[] {
-  const sid = ensureShopId(shopId);
-  return loadJSON<Category[]>(keyCategories(sid), []);
-}
-export function saveCategories(shopId: string, list: Category[]) {
-  const sid = ensureShopId(shopId);
-  saveJSON(keyCategories(sid), list);
-}
+  nextSerialNo(products: Product[]): number {
+    const used = new Set(products.map(p => p.serialNo).filter((n): n is number => Number.isFinite(n)));
+    let n = 1;
+    while (used.has(n)) n++;
+    return n;
+  },
 
-// 提供 UI 檢查：是否重名（忽略大小寫與前後空白）
-export function isCategoryNameTaken(shopId: string, name: string, excludeId?: string) {
-  const sid = ensureShopId(shopId);
-  const list = loadCategories(sid);
-  return categoryNameTaken(list, name, excludeId);
-}
+  add(shopId?: string, name?: string, categoryId?: string | null): Product {
+    const sid = ensureShopId(shopId);
+    const list = ProductStore.load(sid);
+    const p: Product = {
+      id: uid("prod"),
+      name: (name ?? "").trim() || "未命名商品",
+      serialNo: ProductStore.nextSerialNo(list),
+      categoryId: categoryId ?? null,
+    };
+    ProductStore.save([...list, p], sid);
+    return p;
+  },
 
-// 新增分類：放到最後（不可重複）
-export function addCategory(shopId: string, name: string) {
-  const sid = ensureShopId(shopId);
-  const list = loadCategories(sid);
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("名稱不可為空");
-  if (categoryNameTaken(list, trimmed)) throw new Error("分類名稱已存在");
+  duplicate(shopId: string, srcPid: string | number, newName?: string) {
+    const sid = ensureShopId(shopId);
+    const products = ProductStore.load(sid);
 
-  const maxOrder = list.length ? Math.max(...list.map(c => c.order)) : -1;
-  const newCat: Category = {
-    id: "cat_" + Date.now(),
-    name: trimmed,
-    order: maxOrder + 1,
-  };
-  saveCategories(sid, [...list, newCat]);
-  return newCat;
-}
+    const srcId = normalizePid(srcPid);
+    const src = products.find(p => p.id === srcId);
+    if (!src) throw new Error("找不到來源商品");
 
-// 改名（不可重複）
-export function renameCategory(shopId: string, catId: string, newName: string) {
-  const sid = ensureShopId(shopId);
-  const list = loadCategories(sid);
-  const idx = list.findIndex(c => c.id === catId);
-  if (idx === -1) return;
+    const newProd: Product = {
+      id: uid("prod"),
+      name: (newName?.trim() || `${src.name} (複製)`),
+      serialNo: ProductStore.nextSerialNo(products),
+      categoryId: src?.categoryId ?? null,
+    };
+    ProductStore.save([...products, newProd], sid);
 
-  const trimmed = newName.trim();
-  if (!trimmed) throw new Error("名稱不可為空");
-  if (categoryNameTaken(list, trimmed, catId)) throw new Error("分類名稱已存在");
+    // 連同紀錄一起複製
+    const nowMs  = Date.now();
+    const nowSec = Math.floor(nowMs / 1000);
+    const srcRecords = RecordStore.load(srcId, sid) || [];
 
-  list[idx] = { ...list[idx], name: trimmed };
-  saveCategories(sid, list);
-}
+    const clonedRecords = (srcRecords as any[]).map((r: any, i: number) => ({
+      ...r,
+      id: `${nowMs}-${i}`,
+      productId: newProd.id,
+      timestamp: nowSec,
+      date: new Date(nowMs).toISOString(),
+    }));
 
-// 刪除分類（分類內商品歸零）
-export function deleteCategoryAndUnassign(shopId: string, catId: string) {
-  const sid = ensureShopId(shopId);
-  const list = loadCategories(sid).filter(c => c.id !== catId);
-  saveCategories(sid, list);
+    RecordStore.save(newProd.id, clonedRecords, sid);
+    return newProd;
+  },
 
-  // 商品全部取消分類
-  const products = loadProducts(sid).map(p =>
-    p.categoryId === catId ? { ...p, categoryId: null } : p
-  );
-  saveProducts(products, sid);
-}
+  rename(shopId: string, pid: string | number, newName: string) {
+    const sid = ensureShopId(shopId);
+    const pidStr = normalizePid(pid);
+    const list = ProductStore.load(sid);
+    const idx = list.findIndex(p => p.id === pidStr);
+    if (idx === -1) throw new Error("找不到此商品");
+    list[idx] = { ...list[idx], name: newName };
+    ProductStore.save(list, sid);
+  },
 
-// 商品設定分類/清除分類
-export function setProductCategory(shopId: string, pid: number, catId: string | null) {
-  const sid = ensureShopId(shopId);
-  const list = loadProducts(sid);
-  const idx = list.findIndex(p => p.id === pid);
-  if (idx === -1) throw new Error("找不到商品");
-  list[idx] = { ...list[idx], categoryId: catId };
-  saveProducts(list, sid);
-}
+  findIdByAnyIdent(shopId: string, ident: string | number): string | null {
+    const sid = ensureShopId(shopId);
+    const products = ProductStore.load(sid);
+    const s = String(ident).trim();
 
-// 調整分類順序（用上/下移動）：
-export function moveCategory(shopId: string, catId: string, direction: "up" | "down") {
-  const sid = ensureShopId(shopId);
-  const list = loadCategories(sid).sort((a,b)=>a.order-b.order);
-  const idx = list.findIndex(c => c.id === catId);
-  if (idx === -1) return;
+    const byId = products.find(p => p.id === s);
+    if (byId) return byId.id;
 
-  if (direction === "up" && idx === 0) return;
-  if (direction === "down" && idx === list.length - 1) return;
-
-  const targetIdx = direction === "up" ? idx - 1 : idx + 1;
-  // swap
-  const tmp = list[idx];
-  list[idx] = list[targetIdx];
-  list[targetIdx] = tmp;
-
-  // 重新給 order，保證整數遞增
-  const reordered = list.map((c, i) => ({ ...c, order: i }));
-  saveCategories(sid, reordered);
-}
-
-// 直接設定整個排序（如果你後面想做拖曳，可用這個）
-export function setCategoriesOrder(shopId: string, newOrderIds: string[]) {
-  const sid = ensureShopId(shopId);
-  const list = loadCategories(sid);
-  const map = new Map(list.map(c=>[c.id,c]));
-  const reordered: Category[] = [];
-  newOrderIds.forEach((id, i)=>{
-    const c = map.get(id);
-    if (c) reordered.push({ ...c, order: i });
-    map.delete(id);
-  });
-  // 剩下沒列到的放最後
-  const rest = Array.from(map.values());
-  rest.forEach((c, i)=>reordered.push({ ...c, order: reordered.length + i }));
-  saveCategories(sid, reordered);
-}
-
-// 🔎 供商品列表做分類搜尋/自動完成
-export function searchCategories(shopId: string, query: string): Category[] {
-  const sid = ensureShopId(shopId);
-  const q = (query ?? "").trim().toLowerCase();
-  const list = loadCategories(sid).sort((a,b)=>a.order-b.order);
-  if (!q) return list;
-  return list.filter(c => c.name.toLowerCase().includes(q));
-}
-
-// ---------- Notes ----------
-const notesKey = (acc: string) => `notes_${acc}`;
-
-export function loadNotes(acc: string): NoteItem[] {
-  if (!acc) return [];
-  try {
-    return JSON.parse(localStorage.getItem(notesKey(acc)) || "[]");
-  } catch {
-    return [];
-  }
-}
-export function saveNotes(acc: string, list: NoteItem[]) {
-  if (!acc) return;
-  localStorage.setItem(notesKey(acc), JSON.stringify(list));
-}
-
-// ---------- 登出 ----------
-export function softLogout() {
-  localStorage.removeItem(CURR_ACC_KEY);
-  localStorage.removeItem(CURR_ROLE_KEY);
-  localStorage.removeItem(CURR_SHOP_KEY);
-}
-
-// ---------- 複製 / 改名 / 刪除 產品 ----------
-export function duplicateProduct(shopId: string, srcPid: number, newName?: string) {
-  const sid = ensureShopId(shopId);
-  const products = loadProducts(sid);
-
-  // 產生新商品 id（穩健取最大值）
-  const maxId = products.reduce((m, p) => {
-    const n = parseInt(String(p.id), 10);
-    return Number.isFinite(n) ? Math.max(m, n) : m;
-  }, 0);
-  const newId = maxId + 1;
-
-  const src = products.find(p => p.id === srcPid);
-  if (!src) throw new Error("找不到來源商品");
-
-  const newProd: Product = {
-    id: newId,
-    name: (newName?.trim() || `${src.name} (複製)`),
-    categoryId: src?.categoryId ?? null,
-  };
-  saveProducts([...products, newProd], sid);
-
-  // === 連同紀錄一起複製，並把時間改為現在 ===
-  const nowMs  = Date.now();
-  const nowSec = Math.floor(nowMs / 1000);
-  const srcRecords = loadRecords(srcPid, sid) || [];
-
-  const clonedRecords = srcRecords.map((r: any, i: number) => ({
-    ...r,
-    id: `${nowMs}-${i}`,          // 新的紀錄 id（避免與舊的衝突）
-    productId: String(newId),     // 指向新商品
-    timestamp: nowSec,            // 改為複製當下
-    date: new Date(nowMs).toISOString(),
-  }));
-
-  saveRecords(newId, clonedRecords, sid);
-
-  return newProd;
-}
-
-export function renameProduct(shopId: string, pid: number, newName: string) {
-  const sid = ensureShopId(shopId);
-  const list = loadProducts(sid);
-  const idx = list.findIndex(p => p.id === pid);
-  if (idx === -1) throw new Error("找不到此商品");
-  list[idx] = { ...list[idx], name: newName };
-  saveProducts(list, sid);
-}
-
-export function deleteProduct(shopId: string, pid: number) {
-  const sid = ensureShopId(shopId);
-  const list = loadProducts(sid).filter(p => p.id !== pid);
-  saveProducts(list, sid);
-  localStorage.removeItem(keyRecords(sid, pid));
-}
-
-// ---------- 舊資料搬家 ----------
-export function migrateLegacyData() {
-  if (localStorage.getItem("__migrated_multi_shop__")) return;
-
-  const oldProductsRaw = localStorage.getItem("products");
-  if (oldProductsRaw) {
-    let acc = getAccount();
-    if (!acc) {
-      acc = "legacy_user";
-      setAccount(acc);
+    const n = Number(s);
+    if (Number.isFinite(n)) {
+      const bySerial = products.find(p => p.serialNo === n);
+      if (bySerial) return bySerial.id;
     }
-    if (getRole() === "None") setRole("Farmer");
 
-    const metas = getAccountsMeta();
-    if (!metas[acc]) metas[acc] = { role: "Farmer", password: "" };
-    saveAccountsMeta(metas);
+    const legacy = products.find(p => String((p as any)._legacyNumId) === s);
+    return legacy?.id ?? null;
+  },
 
-    const shop = createShop("我的茶行", acc);
-    const products: Product[] = JSON.parse(oldProductsRaw);
-    saveProducts(products, shop.id);
+  delete(shopId: string, pid: string | number) {
+    const sid = ensureShopId(shopId);
+    const ident = String(pid).trim();
+    const realId = ProductStore.findIdByAnyIdent(sid, ident) ?? ident;
 
-    products.forEach(p => {
-      const recRaw = localStorage.getItem(`records_${p.id}`);
-      if (recRaw) {
-        saveRecords(p.id, JSON.parse(recRaw), shop.id);
-        localStorage.removeItem(`records_${p.id}`);
+    const products = ProductStore.load(sid);
+    const next = products.filter(p => p.id !== realId);
+    ProductStore.save(next, sid);
+
+    storage.removeItem(Key.records(sid, realId));
+    if (ident !== realId) storage.removeItem(Key.records(sid, ident));
+
+    StageConfigStore.removeForProduct(sid, realId);
+    StepOrderStore.removeAllForProduct(sid, realId);
+    if (ident !== realId) {
+      StageConfigStore.removeForProduct(sid, ident);
+      StepOrderStore.removeAllForProduct(sid, ident);
+    }
+
+    CleanupService.sweepOrphanDataForShop(sid);
+  },
+
+  debugPrint(shopId?: string) {
+    const sid = ensureShopId(shopId);
+    const list = ProductStore.load(sid);
+    console.table(list.map(p => ({ id: p.id, name: p.name, serialNo: p.serialNo })));
+  },
+};
+
+const RecordStore = {
+  load(pid: number | string, shopId?: string) {
+    const sid = ensureShopId(shopId);
+    const pidStr = normalizePid(pid);
+    if (!pidStr) {
+      console.warn("[loadRecords] 空的 productId，返回空陣列", { sid, pid });
+      return [];
+    }
+    const key = Key.records(sid, pidStr);
+    const list = loadJSON<any[]>(key, []);
+    return Array.isArray(list) ? list : [];
+  },
+
+  save(pid: number | string, list: any[], shopId?: string) {
+    const sid = ensureShopId(shopId);
+    const pidStr = normalizePid(pid);
+    if (!pidStr) {
+      console.warn("[saveRecords] 空的 productId，略過寫入", { sid, pid });
+      return;
+    }
+    const key = Key.records(sid, pidStr);
+    try {
+      saveJSON(key, Array.isArray(list) ? list : []);
+    } catch (e) {
+      console.error("[saveRecords] 寫入失敗", { key, e });
+    }
+    if (sid === DEFAULT_SHOP_ID) {
+      console.info("[saveRecords] 寫入在 DEFAULT_SHOP_ID 命名空間", { key });
+    }
+  },
+
+  update(productId: string, shopId: string, recordId: string, patch: Partial<LifeRecord>) {
+    const list = RecordStore.load(productId, shopId) as LifeRecord[];
+    const idx = list.findIndex(r => r.id === recordId);
+    if (idx === -1) return list;
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    list[idx] = {
+      ...list[idx],
+      ...patch,
+      timestamp: nowTs,
+      date: new Date(nowTs * 1000).toISOString(),
+    };
+    RecordStore.save(productId, list, shopId);
+    return list;
+  },
+
+  delete(productId: string, shopId: string, recordId: string) {
+    const list = RecordStore.load(productId, shopId) as LifeRecord[];
+    const next = list.filter(r => r.id !== recordId);
+    RecordStore.save(productId, next, shopId);
+    return next;
+  },
+
+  upsert(rec: { id?: string; productId: number | string; [k: string]: any }, shopId?: string): any[] {
+    const sid = ensureShopId(shopId);
+    const pidStr = normalizePid(rec?.productId ?? "");
+    if (!pidStr) {
+      console.warn("[upsertLifeRecord] productId 缺失，略過", rec);
+      return [];
+    }
+
+    const list = RecordStore.load(pidStr, sid) as any[];
+
+    const nowMs  = Date.now();
+    const nowSec = Math.floor(nowMs / 1000);
+
+    let next: any[];
+    if (rec.id) {
+      const idx = list.findIndex(r => r.id === rec.id);
+      if (idx >= 0) {
+        next = [...list];
+        next[idx] = { ...list[idx], ...rec, productId: pidStr, updatedAt: nowSec };
+      } else {
+        const newRec = {
+          ...rec,
+          id: rec.id,
+          productId: pidStr,
+          timestamp: rec.timestamp ?? nowSec,
+          date: rec.date ?? new Date(nowMs).toISOString(),
+          updatedAt: nowSec,
+        };
+        next = [...list, newRec];
       }
-    });
+    } else {
+      const newRec = {
+        ...rec,
+        id: `${nowMs}-${Math.random().toString(36).slice(2, 8)}`,
+        productId: pidStr,
+        timestamp: rec.timestamp ?? nowSec,
+        date: rec.date ?? new Date(nowMs).toISOString(),
+        updatedAt: nowSec,
+      };
+      next = [...list, newRec];
+    }
 
-    localStorage.removeItem("products");
-  }
+    RecordStore.save(pidStr, next, sid);
+    return next;
+  },
+};
 
-  localStorage.setItem("__migrated_multi_shop__", "1");
-}
+// -------- CategoryStore -------------------------------------------------------
+const CategoryStore = {
+  normalizeName(s: string) { return (s ?? "").trim().toLowerCase(); },
+  nameTaken(list: Category[], name: string, excludeId?: string) {
+    const norm = CategoryStore.normalizeName(name);
+    return list.some(c => CategoryStore.normalizeName(c.name) === norm && c.id !== excludeId);
+  },
 
-// ---- 可瀏覽茶行（給 Consumer 下拉選單用）----
-// 來源：shops_map + 由 localStorage 推斷出「有資料的 shop_* 命名空間」+ 預設茶行(若有資料)
-export function listBrowsableShops(): TeaShop[] {
-  const map = getShopsMap();                     // 已註冊
-  const registered = Object.values(map);
+  load(shopId?: string): Category[] {
+    const sid = ensureShopId(shopId);
+    return loadJSON<Category[]>(Key.categories(sid), []);
+  },
+  save(shopId?: string, list?: Category[]) {
+    const sid = ensureShopId(shopId);
+    const arr = Array.isArray(list) ? list : [];
+    saveJSON(Key.categories(sid), arr);
+  },
 
-  // 判斷某個 shop 是否真的有資料
-  const hasDataForShop = (sid: string) => {
-    const prods = loadJSON<Product[]>(keyProducts(sid), []);
-    const cats  = loadJSON<Category[]>(keyCategories(sid), []);
-    const anyRecord = Object.keys(localStorage).some(k =>
-      k.startsWith(`shop_${sid}_records_`)
+  isNameTaken(shopId: string, name: string, excludeId?: string) {
+    const sid = ensureShopId(shopId);
+    const list = CategoryStore.load(sid);
+    return CategoryStore.nameTaken(list, name, excludeId);
+  },
+
+  add(shopId: string, name: string) {
+    const sid = ensureShopId(shopId);
+    const list = CategoryStore.load(sid);
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("名稱不可為空");
+    if (CategoryStore.nameTaken(list, trimmed)) throw new Error("分類名稱已存在");
+
+    const maxOrder = list.length ? Math.max(...list.map(c => c.order)) : -1;
+    const newCat: Category = { id: "cat_" + Date.now(), name: trimmed, order: maxOrder + 1 };
+    CategoryStore.save(sid, [...list, newCat]);
+    return newCat;
+  },
+
+  rename(shopId: string, catId: string, newName: string) {
+    const sid = ensureShopId(shopId);
+    const list = CategoryStore.load(sid);
+    const idx = list.findIndex(c => c.id === catId);
+    if (idx === -1) return;
+
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error("名稱不可為空");
+    if (CategoryStore.nameTaken(list, trimmed, catId)) throw new Error("分類名稱已存在");
+    list[idx] = { ...list[idx], name: trimmed };
+    CategoryStore.save(sid, list);
+  },
+
+  deleteAndUnassign(shopId: string, catId: string) {
+    const sid = ensureShopId(shopId);
+    const list = CategoryStore.load(sid).filter(c => c.id !== catId);
+    CategoryStore.save(sid, list);
+
+    const products = ProductStore.load(sid).map(p =>
+      p.categoryId === catId ? { ...p, categoryId: null } : p
     );
-    return prods.length > 0 || cats.length > 0 || anyRecord;
-  };
+    ProductStore.save(products, sid);
+  },
 
-  // 從 localStorage 掃描出所有有資料的 shop_* 命名空間（即使沒在 shops_map 內也補上）
-  const inferred: TeaShop[] = [];
-  for (const k of Object.keys(localStorage)) {
-    // 看到 products / categories 任一個都視為此 shop 存在
-    const m1 = k.match(/^shop_(.+?)_products$/);
-    const m2 = k.match(/^shop_(.+?)_categories$/);
-    const sid = (m1?.[1] ?? m2?.[1]) || null;
-    if (!sid) continue;
-    if (map[sid]) continue;              // 已在 shops_map
-    if (!hasDataForShop(sid)) continue;  // 沒真正資料就跳過
-    inferred.push({ id: sid, name: `未知茶行（${sid}）`, owner: "(unknown)" });
-  }
+  setProductCategory(shopId: string, pid: string | number, catId: string | null) {
+    const sid   = ensureShopId(shopId);
+    const ident = normalizePid(pid);
+    const realId = ProductStore.findIdByAnyIdent(sid, ident) ?? ident;
 
-  // 預設空間有資料 → 加上「預設茶行」
-  const extras: TeaShop[] =
-    hasDataForShop(DEFAULT_SHOP_ID) && !map[DEFAULT_SHOP_ID]
-      ? [{ id: DEFAULT_SHOP_ID, name: "預設茶行", owner: "(system)" }]
-      : [];
+    const list = ProductStore.load(sid);
+    const idx  = list.findIndex(p => p.id === realId);
+    if (idx === -1) throw new Error("找不到商品");
 
-  // 合併去重
-  const all: Record<string, TeaShop> = {};
-  [...registered, ...inferred, ...extras].forEach(s => { all[s.id] = s; });
+    list[idx] = { ...list[idx], categoryId: catId };
+    ProductStore.save(list, sid);
+  },
 
-  // 排序：把「預設茶行」放最前，其餘依名稱排序
-  const list = Object.values(all).sort((a, b) => {
-    if (a.id === DEFAULT_SHOP_ID) return -1;
-    if (b.id === DEFAULT_SHOP_ID) return 1;
-    return a.name.localeCompare(b.name);
-  });
+  move(shopId: string, catId: string, direction: "up" | "down") {
+    const sid = ensureShopId(shopId);
+    const list = CategoryStore.load(sid).sort((a,b)=>a.order-b.order);
+    const idx = list.findIndex(c => c.id === catId);
+    if (idx === -1) return;
+    if (direction === "up" && idx === 0) return;
+    if (direction === "down" && idx === list.length - 1) return;
 
-  return list;
-}
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    const tmp = list[idx];
+    list[idx] = list[targetIdx];
+    list[targetIdx] = tmp;
 
-// === 追加：生命週期設定存取（修正版：防空、壞資料回復模板並寫回） ===
-import { FIXED_STAGE_TEMPLATES, StageConfig, LifeRecord } from "./lifecycleTypes";
+    const reordered = list.map((c, i) => ({ ...c, order: i }));
+    CategoryStore.save(sid, reordered);
+  },
 
-// 用 ensureShopId 產生「一定不為空」的 shopId 關鍵字
-const STAGE_CONFIG_KEY = (shopId: string, productId: string) =>
-  `stage_config:${shopId}:${productId}`;
+  setOrder(shopId: string, newOrderIds: string[]) {
+    const sid = ensureShopId(shopId);
+    const list = CategoryStore.load(sid);
+    const map = new Map(list.map(c=>[c.id,c]));
+    const reordered: Category[] = [];
+    newOrderIds.forEach((id, i)=>{
+      const c = map.get(id);
+      if (c) reordered.push({ ...c, order: i });
+      map.delete(id);
+    });
+    const rest = Array.from(map.values());
+    rest.forEach((c, i)=>reordered.push({ ...c, order: reordered.length + i }));
+    CategoryStore.save(sid, reordered);
+  },
 
-/** 深拷貝模板，避免外部誤改 */
+  search(shopId: string, query: string): Category[] {
+    const sid = ensureShopId(shopId);
+    const q = (query ?? "").trim().toLowerCase();
+    const list = CategoryStore.load(sid).sort((a,b)=>a.order-b.order);
+    if (!q) return list;
+    return list.filter(c => c.name.toLowerCase().includes(q));
+  },
+
+  getRecentIds(shopId?: string): string[] {
+    const sid = ensureShopId(shopId);
+    try {
+      return JSON.parse(storage.getItem(Key.recentCats(sid)) || "[]");
+    } catch {
+      return [];
+    }
+  },
+  pushRecentId(catId: string | null | undefined, shopId?: string) {
+    const sid = ensureShopId(shopId);
+    if (!catId) return;
+    const cur = CategoryStore.getRecentIds(sid);
+    const next = [catId, ...cur.filter(id => id !== catId)].slice(0, MAX_RECENT_CATS);
+    storage.setItem(Key.recentCats(sid), JSON.stringify(next));
+  },
+};
+
+// -------- NoteStore -----------------------------------------------------------
+const NoteStore = {
+  load(acc: string): NoteItem[] {
+    if (!acc) return [];
+    try {
+      return JSON.parse(storage.getItem(Key.notes(acc)) || "[]");
+    } catch { return []; }
+  },
+  save(acc: string, list: NoteItem[]) {
+    if (!acc) return;
+    storage.setItem(Key.notes(acc), JSON.stringify(list));
+  },
+};
+
+// -------- StageConfigStore ----------------------------------------------------
 function cloneTemplate(): StageConfig[] {
   return JSON.parse(JSON.stringify(FIXED_STAGE_TEMPLATES));
 }
+const StageConfigStore = {
+  load(shopId?: string, productId?: string): StageConfig[] {
+    const sid = ensureShopId(shopId);
+    const pid = String(productId ?? "").trim();
 
-/** 讀取階段設定：
- *  - 沒資料/壞資料/空陣列 -> 自動回復模板並寫回
- *  - 一律使用 ensureShopId()，不會出現 undefined 命名空間
- */
-export function loadStageConfig(shopId?: string, productId?: string): StageConfig[] {
-  const sid = ensureShopId(shopId);
-  const pid = String(productId ?? "");
-  const key = STAGE_CONFIG_KEY(sid, pid);
+    // 清掉歷史殘留的空 pid key
+    const emptyKey = Key.stageCfg(sid, "");
+    if (storage.getItem(emptyKey)) storage.removeItem(emptyKey);
 
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) {
+    if (isBlank(pid)) return cloneTemplate();
+
+    const key = Key.stageCfg(sid, pid);
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) {
+        const tpl = cloneTemplate();
+        storage.setItem(key, JSON.stringify(tpl));
+        return tpl;
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        const tpl = cloneTemplate();
+        storage.setItem(key, JSON.stringify(tpl));
+        return tpl;
+      }
+      return parsed as StageConfig[];
+    } catch {
       const tpl = cloneTemplate();
-      localStorage.setItem(key, JSON.stringify(tpl));
+      storage.setItem(key, JSON.stringify(tpl));
       return tpl;
     }
-    const parsed = JSON.parse(raw);
+  },
 
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      const tpl = cloneTemplate();
-      localStorage.setItem(key, JSON.stringify(tpl));
-      return tpl;
-    }
-    return parsed as StageConfig[];
-  } catch {
+  save(shopId?: string, productId?: string, cfg?: StageConfig[]) {
+    const sid = ensureShopId(shopId);
+    const pid = String(productId ?? "").trim();
+    if (isBlank(pid)) return;
+    const key = Key.stageCfg(sid, pid);
+    const data = Array.isArray(cfg) && cfg.length > 0 ? cfg : cloneTemplate();
+    storage.setItem(key, JSON.stringify(data));
+  },
+
+  reset(shopId?: string, productId?: string): StageConfig[] {
+    const sid = ensureShopId(shopId);
+    const pid = String(productId ?? "").trim();
+    if (isBlank(pid)) return cloneTemplate();
+    const key = Key.stageCfg(sid, pid);
     const tpl = cloneTemplate();
-    localStorage.setItem(key, JSON.stringify(tpl));
+    storage.setItem(key, JSON.stringify(tpl));
     return tpl;
+  },
+
+  removeForProduct(shopId: string, productId: string) {
+    const sid = ensureShopId(shopId);
+    const pid = String(productId).trim();
+    const emptyKey = Key.stageCfg(sid, "");
+    if (storage.getItem(emptyKey)) storage.removeItem(emptyKey);
+    if (!pid) return;
+
+    const newKey = Key.stageCfg(sid, pid);
+    if (storage.getItem(newKey)) storage.removeItem(newKey);
+
+    const legacyKey1 = `stage_config::${pid}`;
+    if (storage.getItem(legacyKey1)) storage.removeItem(legacyKey1);
+
+    const legacyKey2 = `stage_config::__default_shop__:${pid}`;
+    if (storage.getItem(legacyKey2)) storage.removeItem(legacyKey2);
+  },
+};
+
+// -------- StepOrderStore ------------------------------------------------------
+const StepOrderStore = {
+  load(shopId: string, productId: string | number, stageId: string): string[] | null {
+    const sid = ensureShopId(shopId);
+    const pid = normalizePid(productId);
+    if (isBlank(pid) || isBlank(stageId)) return null;
+    const key = Key.stepOrder(sid, pid, stageId);
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) return null;
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? (arr as string[]) : null;
+    } catch { return null; }
+  },
+
+  save(shopId: string, productId: string | number, stageId: string, orderedStepIds: string[]) {
+    const sid = ensureShopId(shopId);
+    const pid = normalizePid(productId);
+    if (isBlank(pid) || isBlank(stageId)) return;
+    const key = Key.stepOrder(sid, pid, stageId);
+    storage.setItem(key, JSON.stringify(orderedStepIds || []));
+  },
+
+  ensureFromSteps(shopId: string, productId: string | number, stageId: string, steps: { id: string }[]): string[] {
+    const sid = ensureShopId(shopId);
+    const pid = normalizePid(productId);
+    const cur = StepOrderStore.load(sid, pid, stageId);
+    const incomingIds = steps.map(s => s.id);
+    if (cur && cur.length) {
+      const incomingSet = new Set(incomingIds);
+      const filtered = cur.filter(id => incomingSet.has(id));
+      const missing  = incomingIds.filter(id => !filtered.includes(id));
+      const merged   = [...filtered, ...missing];
+      if (JSON.stringify(merged) !== JSON.stringify(cur)) {
+        StepOrderStore.save(sid, pid, stageId, merged);
+      }
+      return merged;
+    }
+    StepOrderStore.save(sid, pid, stageId, incomingIds);
+    return incomingIds;
+  },
+
+  removeAllForProduct(shopId: string, productId: string | number) {
+    const sid = ensureShopId(shopId);
+    const pid = normalizePid(productId);
+    const prefix = `step_order:${sid}:${pid}:`;
+    storage.keys()
+      .filter(k => k.startsWith(prefix))
+      .forEach(k => storage.removeItem(k));
+  },
+};
+
+// -------- Cleanup / Migration -------------------------------------------------
+const RemoveByPattern = (regex: RegExp) => {
+  storage.keys().forEach(k => { if (regex.test(k)) storage.removeItem(k); });
+};
+
+const CleanupService = {
+  clearShopAllData(shopId: string) {
+    const sid = ensureShopId(shopId);
+
+    const products: Product[] = loadJSON<Product[]>(Key.products(sid), []);
+    products.forEach(p => {
+      storage.removeItem(Key.records(sid, p.id));
+      StageConfigStore.removeForProduct(sid, p.id);
+      StepOrderStore.removeAllForProduct(sid, p.id);
+    });
+
+    storage.removeItem(Key.products(sid));
+    storage.removeItem(Key.categories(sid));
+    storage.removeItem(Key.recentCats(sid));
+
+    // 清理殘留的孤兒資料
+    CleanupService.sweepOrphanDataForShop(sid);
+  },
+
+  sweepOrphanDataForShop(shopId?: string): { removedRecords: number; removedStageCfg: number; removedStepOrders: number; removedWeird: number } {
+    const sid = ensureShopId(shopId);
+    const productIds = new Set(ProductStore.load(sid).map(p => String(p.id)));
+
+    let removedRecords = 0;
+    let removedStageCfg = 0;
+    let removedStepOrders = 0;
+    let removedWeird   = 0;
+
+    for (const key of storage.keys()) {
+      {
+        const m = key.match(/^shop_(.+?)_records_(.+)$/);
+        if (m && m[1] === sid) {
+          const pid = m[2];
+          if (!productIds.has(pid)) {
+            storage.removeItem(key);
+            removedRecords++;
+          }
+        }
+      }
+      {
+        const m = key.match(/^stage_config:(.+?):(.*)$/);
+        if (m && m[1] === sid) {
+          const pid = m[2];
+          if (isBlank(pid) || !productIds.has(pid)) {
+            storage.removeItem(key);
+            removedStageCfg++;
+          }
+        }
+      }
+      {
+        const m = key.match(/^step_order:(.+?):(.+?):(.+)$/);
+        if (m && m[1] === sid) {
+          const pid = m[2];
+          if (!productIds.has(pid)) {
+            storage.removeItem(key);
+            removedStepOrders++;
+          }
+        }
+      }
+      if (key.startsWith("stage_config::")) {
+        const pid = key.split("::")[1] || "";
+        if (isBlank(pid) || ![...productIds].some(id => id === pid)) {
+          storage.removeItem(key);
+          removedStageCfg++;
+        }
+      }
+      if (/^shop__records_/.test(key)) {
+        storage.removeItem(key);
+        removedWeird++;
+      }
+    }
+
+    if (removedRecords || removedStageCfg || removedStepOrders || removedWeird) {
+      console.info("[sweepOrphanDataForShop] removed", { sid, removedRecords, removedStageCfg, removedStepOrders, removedWeird });
+    }
+    return { removedRecords, removedStageCfg, removedStepOrders, removedWeird };
+  },
+
+  sweepAllShopsLegacyWeirdKeys() {
+    const ids = new Set<string>();
+    storage.keys().forEach(k => {
+      const m = k.match(/^shop_(.+?)_(products|categories|records_.+)$/);
+      if (m) ids.add(m[1]);
+    });
+    ids.add(DEFAULT_SHOP_ID);
+    Object.values(ShopStore.getMap()).forEach(s => ids.add(s.id));
+
+    if (storage.getItem("frequentProducts")) storage.removeItem("frequentProducts");
+    ids.forEach(sid => CleanupService.sweepOrphanDataForShop(sid));
+  },
+
+  clearAllAppDataButKeepMigrations() {
+    const APP_KEY_PREFIXES = [
+      "shop__", "shop_", "stage_config:", "step_order:", "target:",
+    ];
+    APP_KEY_PREFIXES.forEach(p =>
+      RemoveByPattern(new RegExp(`^${p.replace(/([:*_])/g, "\\$1")}`))
+    );
+
+    RemoveByPattern(/^shop_.*_batches$/);
+
+    [ "CFP_auth_token", CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY, SHOPS_KEY ].forEach(k => storage.removeItem(k));
+    // 如要連 accounts_meta 一起砍，解開下行：
+    // storage.removeItem(ACCOUNTS_KEY);
+  },
+
+  clearShopsData(shopIds: string[]) {
+    shopIds.forEach((sid) => {
+      const esc = sid.replace(/([:*_])/g, "\\$1");
+
+      RemoveByPattern(new RegExp(`^shop_${esc}_`));
+      RemoveByPattern(new RegExp(`^stage_config:${esc}:`));
+      RemoveByPattern(new RegExp(`^step_order:${esc}:`));
+      RemoveByPattern(new RegExp(`^target:${esc}:`));
+      RemoveByPattern(new RegExp(`^shop_${esc}_batches$`));
+
+      if (sid === DEFAULT_SHOP_ID) {
+        RemoveByPattern(/^stage_config:__default_shop__:/);
+        RemoveByPattern(/^shop____default_shop___/);
+        RemoveByPattern(/^shop__default_shop__/);
+        RemoveByPattern(/^shop____default_shop___batches$/);
+        RemoveByPattern(/^shop__default_shop__batches$/);
+      }
+    });
+    shopIds.forEach(sid => CleanupService.sweepOrphanDataForShop(sid));
+  },
+
+  hardAppReset() { CleanupService.clearAllAppDataButKeepMigrations(); },
+
+  hardAppNuke() {
+    RemoveByPattern(/^shop__/);
+    RemoveByPattern(/^shop_/);
+    RemoveByPattern(/^stage_config:/);
+    RemoveByPattern(/^step_order:/);
+    RemoveByPattern(/^target:/);
+    RemoveByPattern(/^notes_/);
+    RemoveByPattern(/_batches$/);
+
+    [
+      "CFP_auth_token",
+      CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY,
+      SHOPS_KEY, ACCOUNTS_KEY,
+      "__migrated_multi_shop__", "__migrated_uid_pk__",
+      LEGACY_CURR_ACC_KEY,
+    ].forEach(k => storage.removeItem(k));
+  },
+};
+
+const MigrationService = {
+  migrateLegacyData() {
+    if (!storage.getItem("__migrated_multi_shop__")) {
+      const oldProductsRaw = storage.getItem("products");
+      if (oldProductsRaw) {
+        let acc = AuthStore.getAccount();
+        if (!acc) { acc = "legacy_user"; AuthStore.setAccount(acc); }
+        if (AuthStore.getRole() === "None") AuthStore.setRole("Farmer");
+
+        const metas = AccountStore.getAccountsMeta();
+        if (!metas[acc]) metas[acc] = { role: "Farmer", password: "" };
+        AccountStore.saveAccountsMeta(metas);
+
+        const shop = ShopStore.create("我的茶行", acc);
+        const products: any[] = JSON.parse(oldProductsRaw);
+        saveJSON(Key.products(shop.id), products);
+
+        products.forEach(p => {
+          const recRaw = storage.getItem(`records_${p.id}`);
+          if (recRaw) {
+            saveJSON(Key.records(shop.id, String(p.id)), JSON.parse(recRaw));
+            storage.removeItem(`records_${p.id}`);
+          }
+        });
+
+        storage.removeItem("products");
+      }
+      storage.setItem("__migrated_multi_shop__", "1");
+    }
+
+    if (!storage.getItem("__migrated_uid_pk__")) {
+      const shopIds = new Set<string>();
+      for (const k of storage.keys()) {
+        const m = k.match(/^shop_(.+?)_products$/);
+        if (m) shopIds.add(m[1]);
+      }
+      shopIds.add(DEFAULT_SHOP_ID);
+
+      let migratedCount = 0;
+
+      for (const sid of shopIds) {
+        const products = loadJSON<any[]>(Key.products(sid), []);
+        if (!Array.isArray(products) || products.length === 0) continue;
+
+        const need = products.filter(p => typeof p?.id !== "string");
+        if (need.length === 0) continue;
+
+        const idMap = new Map<string, string>();
+        const newList: Product[] = products.map((p: any) => {
+          const oldIdStr = String(p.id);
+          const newId = uid("prod");
+          idMap.set(oldIdStr, newId);
+          migratedCount++;
+          return {
+            id: newId,
+            name: p.name ?? "未命名商品",
+            serialNo: Number.isFinite(p.serialNo) ? p.serialNo : undefined,
+            categoryId: p.categoryId ?? null,
+          };
+        });
+
+        const used = new Set(newList.map(x => x.serialNo).filter((n): n is number => Number.isFinite(n)));
+        let n = 1;
+        for (const p of newList) {
+          if (p.serialNo == null) {
+            while (used.has(n)) n++;
+            p.serialNo = n++;
+          }
+        }
+
+        saveJSON(Key.products(sid), newList);
+
+        for (const [oldIdStr, newId] of idMap.entries()) {
+          const oldKey = Key.records(sid, oldIdStr);
+          const list = loadJSON<any[]>(oldKey, null as any);
+          if (list) {
+            const rewritten = list.map(r => ({ ...r, productId: newId }));
+            saveJSON(Key.records(sid, newId), rewritten);
+            storage.removeItem(oldKey);
+          }
+        }
+      }
+
+      storage.setItem("__migrated_uid_pk__", "1");
+      if (migratedCount > 0) {
+        console.info(`[migrateLegacyData] migrated ${migratedCount} products to string IDs.`);
+      }
+    }
+
+    CleanupService.sweepAllShopsLegacyWeirdKeys();
+  },
+
+  bootStorageHousekeeping() {
+    AuthStore.migrateLegacyAuthKeys();
+    CleanupService.sweepAllShopsLegacyWeirdKeys();
+
+    const metas = AccountStore.getAccountsMeta();
+    if (!metas || Object.keys(metas).length === 0) {
+      CleanupService.hardAppNuke();
+    }
+  },
+};
+
+// -------- BrowseableShops -----------------------------------------------------
+const BrowseService = {
+  listBrowsableShops(): TeaShop[] {
+    const map = ShopStore.getMap();
+    const registered = Object.values(map);
+
+    const hasDataForShop = (sid: string) => {
+      const prods = loadJSON<Product[]>(Key.products(sid), []);
+      const cats  = loadJSON<Category[]>(Key.categories(sid), []);
+      const anyRecord = storage.keys().some(k => k.startsWith(`shop_${sid}_records_`));
+      const anyStage  = storage.keys().some(k => k.startsWith(`stage_config:${sid}:`));
+      const anyOrder  = storage.keys().some(k => k.startsWith(`step_order:${sid}:`));
+      return prods.length > 0 || cats.length > 0 || anyRecord || anyStage || anyOrder;
+    };
+
+    const inferred: TeaShop[] = [];
+    for (const k of storage.keys()) {
+      const m1 = k.match(/^shop_(.+?)_products$/);
+      const m2 = k.match(/^shop_(.+?)_categories$/);
+      const sid = (m1?.[1] ?? m2?.[1]) || null;
+      if (!sid) continue;
+      if (map[sid]) continue;
+      if (!hasDataForShop(sid)) continue;
+      inferred.push({ id: sid, name: `未知茶行（${sid}）`, owner: "(unknown)"});
+    }
+
+    const extras: TeaShop[] =
+      hasDataForShop(DEFAULT_SHOP_ID) && !map[DEFAULT_SHOP_ID]
+        ? [{ id: DEFAULT_SHOP_ID, name: "預設茶行", owner: "(system)" }]
+        : [];
+
+    const all: Record<string, TeaShop> = {};
+    [...registered, ...inferred, ...extras].forEach(s => { all[s.id] = s; });
+
+    const list = Object.values(all).sort((a, b) => {
+      if (a.id === DEFAULT_SHOP_ID) return -1;
+      if (b.id === DEFAULT_SHOP_ID) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return list;
+  },
+};
+
+// ===============================================================
+// 對外 API（保留你原本的函式名稱，改為委派到 Store/Service）
+// ===============================================================
+
+// Auth / Role
+export const getAccount        = () => AuthStore.getAccount();
+export const setAccount        = (v: string) => AuthStore.setAccount(v);
+export const clearAccount      = () => AuthStore.clearAccount();
+export const getRole           = (): Role => AuthStore.getRole();
+export const setRole           = (v: Role) => AuthStore.setRole(v);
+export const getCurrentShopId  = () => AuthStore.getCurrentShopId();
+export const setCurrentShopId  = (id: string) => AuthStore.setCurrentShopId(id);
+
+// Accounts
+export const getAccountsMeta   = () => AccountStore.getAccountsMeta();
+export const saveAccountsMeta  = (obj: Record<string, AccountMeta>) => AccountStore.saveAccountsMeta(obj);
+export const accountExists     = (account: string) => AccountStore.exists(account);
+export const createAccount     = (a: string, p: string, r: Role = "None") => AccountStore.create(a, p, r);
+export const verifyLogin       = (a: string, p: string) => AccountStore.verifyLogin(a, p);
+export const setRoleOf         = (a: string, r: Role) => AccountStore.setRoleOf(a, r);
+
+// Shops
+export const getShopsMap       = () => ShopStore.getMap();
+export const saveShopsMap      = (obj: Record<string, TeaShop>) => ShopStore.saveMap(obj);
+export const isShopNameTaken   = (name: string) => ShopStore.isNameTaken(name);
+export const createShop        = (name: string, owner: string) => ShopStore.create(name, owner);
+export const deleteShop        = (shopId: string) => ShopStore.delete(shopId);
+export const listMyShops       = (account: string) => ShopStore.listMine(account);
+export const listAllShops      = () => ShopStore.listAll();
+
+// Products / Records
+export const loadProducts      = (shopId?: string) => ProductStore.load(shopId);
+export const saveProducts      = (list: Product[], shopId?: string) => ProductStore.save(list, shopId);
+export const addProduct        = (shopId?: string, name?: string, categoryId?: string | null) => ProductStore.add(shopId, name, categoryId);
+export const duplicateProduct  = (shopId: string, srcPid: string | number, newName?: string) => ProductStore.duplicate(shopId, srcPid, newName);
+export const renameProduct     = (shopId: string, pid: string | number, newName: string) => ProductStore.rename(shopId, pid, newName);
+export const findProductIdByAnyIdent = (shopId: string, ident: string | number) => ProductStore.findIdByAnyIdent(shopId, ident);
+export const deleteProduct     = (shopId: string, pid: string | number) => ProductStore.delete(shopId, pid);
+
+export const loadRecords       = (pid: number | string, shopId?: string) => RecordStore.load(pid, shopId);
+export const saveRecords       = (pid: number | string, list: any[], shopId?: string) => RecordStore.save(pid, list, shopId);
+export const updateRecord      = (productId: string, shopId: string, recordId: string, patch: Partial<LifeRecord>) => RecordStore.update(productId, shopId, recordId, patch);
+export const deleteRecord      = (productId: string, shopId: string, recordId: string) => RecordStore.delete(productId, shopId, recordId);
+export interface LifeRecordUpsert { id?: string; productId: number | string; [k: string]: any; }
+export const upsertLifeRecord  = (rec: LifeRecordUpsert, shopId?: string) => RecordStore.upsert(rec, shopId);
+
+// Categories
+export const loadCategories    = (shopId?: string) => CategoryStore.load(shopId);
+export const saveCategories    = (shopId?: string, list?: Category[]) => CategoryStore.save(shopId, list);
+export const isCategoryNameTaken = (shopId: string, name: string, excludeId?: string) => CategoryStore.isNameTaken(shopId, name, excludeId);
+export const addCategory       = (shopId: string, name: string) => CategoryStore.add(shopId, name);
+export const renameCategory    = (shopId: string, catId: string, newName: string) => CategoryStore.rename(shopId, catId, newName);
+export const deleteCategoryAndUnassign = (shopId: string, catId: string) => CategoryStore.deleteAndUnassign(shopId, catId);
+export const setProductCategory = (shopId: string, pid: string | number, catId: string | null) => CategoryStore.setProductCategory(shopId, pid, catId);
+export const moveCategory      = (shopId: string, catId: string, direction: "up" | "down") => CategoryStore.move(shopId, catId, direction);
+export const setCategoriesOrder= (shopId: string, newOrderIds: string[]) => CategoryStore.setOrder(shopId, newOrderIds);
+export const searchCategories  = (shopId: string, q: string) => CategoryStore.search(shopId, q);
+export const getRecentCategoryIds = (shopId?: string) => CategoryStore.getRecentIds(shopId);
+export const pushRecentCategoryId = (catId: string | null | undefined, shopId?: string) => CategoryStore.pushRecentId(catId, shopId);
+
+// Notes
+export const loadNotes         = (acc: string) => NoteStore.load(acc);
+export const saveNotes         = (acc: string, list: NoteItem[]) => NoteStore.save(acc, list);
+
+// Stage Config
+export const loadStageConfig   = (shopId?: string, productId?: string) => StageConfigStore.load(shopId, productId);
+export const saveStageConfig   = (shopId?: string, productId?: string, cfg?: StageConfig[]) => StageConfigStore.save(shopId, productId, cfg);
+export const resetStageConfig  = (shopId?: string, productId?: string) => StageConfigStore.reset(shopId, productId);
+
+// Step Order
+export const loadStepOrder     = (shopId: string, productId: string | number, stageId: string) => StepOrderStore.load(shopId, productId, stageId);
+export const saveStepOrder     = (shopId: string, productId: string | number, stageId: string, orderedStepIds: string[]) => StepOrderStore.save(shopId, productId, stageId, orderedStepIds);
+export const ensureStepOrderFromSteps = (shopId: string, productId: string | number, stageId: string, steps: { id: string }[]) =>
+  StepOrderStore.ensureFromSteps(shopId, productId, stageId, steps);
+
+// Migration & Cleanup / Dev helpers
+export const migrateLegacyAuthKeys = () => AuthStore.migrateLegacyAuthKeys();
+export const migrateLegacyData     = () => MigrationService.migrateLegacyData();
+export const sweepOrphanDataForShop= (shopId?: string) => CleanupService.sweepOrphanDataForShop(shopId);
+export const debugPrintProducts    = (shopId?: string) => ProductStore.debugPrint(shopId);
+
+// Browseable Shops
+export const listBrowsableShops    = () => BrowseService.listBrowsableShops();
+
+// Logout / Login flows
+export function softLogout() { AuthStore.softLogout(); }
+export function login(account: string, password: string): boolean {
+  const metas = AccountStore.getAccountsMeta();
+  const meta = metas[account];
+  if (!meta || meta.password !== password) return false;
+
+  AuthStore.setAccount(account);
+  AuthStore.setRole(meta.role || "None");
+  const sid = meta.currentShopId || (meta.shopIds?.[0]) || DEFAULT_SHOP_ID;
+  AuthStore.setCurrentShopId(sid);
+  return true;
+}
+export function logout() {
+  AuthStore.softLogout();
+  storage.removeItem("CFP_auth_token");
+  storage.removeItem(LEGACY_CURR_ACC_KEY);
+}
+
+// 新增：帳號/店鋪清除與硬重置工具（相容原API）
+export function clearAllAppDataButKeepMigrations() { CleanupService.clearAllAppDataButKeepMigrations(); }
+export function clearShopsData(shopIds: string[]) { CleanupService.clearShopsData(shopIds); }
+export function deleteAccountCompletely(accountId: string) {
+  const metas = AccountStore.getAccountsMeta();
+  const meta  = metas[accountId];
+  if (!meta) return;
+
+  CleanupService.clearShopsData(meta.shopIds ?? []);
+
+  const shopsMap = ShopStore.getMap();
+  (meta.shopIds ?? []).forEach(id => delete shopsMap[id]);
+  ShopStore.saveMap(shopsMap);
+
+  storage.removeItem(Key.notes(accountId));
+
+  delete metas[accountId];
+  AccountStore.saveAccountsMeta(metas);
+
+  if (AuthStore.getAccount() === accountId) {
+    ["CFP_auth_token", CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY].forEach(k => storage.removeItem(k));
+  }
+
+  CleanupService.sweepAllShopsLegacyWeirdKeys();
+
+  if (Object.keys(metas).length === 0) {
+    CleanupService.hardAppNuke();
   }
 }
+export function hardAppReset() { CleanupService.hardAppReset(); }
+export function hardAppNuke()  { CleanupService.hardAppNuke(); }
+export function getAllAccountIds(): string[] { return AccountStore.getAllIds(); }
+export function deleteAllAccountsCompletely() {
+  AccountStore.getAllIds().forEach(id => deleteAccountCompletely(id));
+  storage.removeItem(ACCOUNTS_KEY);
+  storage.removeItem(SHOPS_KEY);
+  ["CFP_auth_token", CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY].forEach(k => storage.removeItem(k));
+  RemoveByPattern(/^target:/);
+  RemoveByPattern(/^shop_.*_batches$/);
+  RemoveByPattern(/^shop___default_shop___batches$/);
+  RemoveByPattern(/^shop__default_shop__batches$/);
+  CleanupService.sweepAllShopsLegacyWeirdKeys();
+}
+export function bootStorageHousekeeping() { MigrationService.bootStorageHousekeeping(); }
 
-/** 寫入階段設定：使用 ensureShopId，確保都落在正確命名空間 */
-export function saveStageConfig(shopId?: string, productId?: string, cfg?: StageConfig[]) {
-  const sid = ensureShopId(shopId);
-  const pid = String(productId ?? "");
-  const key = STAGE_CONFIG_KEY(sid, pid);
-  const data = Array.isArray(cfg) && cfg.length > 0 ? cfg : cloneTemplate();
-  localStorage.setItem(key, JSON.stringify(data));
+// --- Backward-compat alias (for old imports) ---
+export function deleteAccount(accountId: string) {
+  return deleteAccountCompletely(accountId);
 }
 
-/** 需要時可手動重置某商品的階段設定為模板 */
-export function resetStageConfig(shopId?: string, productId?: string): StageConfig[] {
-  const sid = ensureShopId(shopId);
-  const pid = String(productId ?? "");
-  const key = STAGE_CONFIG_KEY(sid, pid);
-  const tpl = cloneTemplate();
-  localStorage.setItem(key, JSON.stringify(tpl));
-  return tpl;
+// 放在 CleanupService 旁邊或裡面都可以
+function getAllExistingShopIds(): Set<string> {
+  const ids = new Set<string>();
+  // 來自 shops_map
+  Object.keys(getShopsMap() || {}).forEach(id => ids.add(id));
+  // 從 localStorage 命名空間推斷
+  for (const k of Object.keys(localStorage)) {
+    const m = k.match(/^shop_(.+?)_(products|categories|records_.+)$/);
+    if (m) ids.add(m[1]);
+  }
+  // 也納入 DEFAULT_SHOP_ID（若你想保留它，可以移除這行）
+  ids.add(DEFAULT_SHOP_ID);
+  return ids;
+}
+
+export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: boolean }) {
+  const { includeDefault = false } = opts || {};
+  const existingShopIds = getAllExistingShopIds();
+
+  const toDel: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i)!;
+
+    // 1) target:<sid>:<pid> → 若 sid 不存在，或該 sid 下找不到該 pid 的產品，就刪
+    if (k.startsWith("target:")) {
+      const m = k.match(/^target:([^:]+):(.+)$/);
+      if (m) {
+        const sid = m[1];
+        const pid = m[2];
+
+        const isDefault = (sid === "__default_shop__");
+        if (isDefault && !includeDefault) {
+          // 保留 default 命名空間（如果不想保留，呼叫時傳 includeDefault:true）
+        } else if (!existingShopIds.has(sid)) {
+          toDel.push(k);
+        } else {
+          // sid 存在 → 檢查該 shop 的 products 是否包含此 pid
+          const prods = loadJSON<Product[]>(`shop_${sid}_products`, []);
+          const found = prods.some(p => String(p.id) === String(pid));
+          if (!found) toDel.push(k);
+        }
+      }
+    }
+
+    // 2) 老怪鍵：shop___default_shop___batches / shop__default_shop__batches
+    if (/^shop___default_shop___batches$/.test(k) || /^shop__default_shop__batches$/.test(k)) {
+      // 預設直接砍；若真的要保留，自己拿掉這段
+      toDel.push(k);
+    }
+  }
+
+  toDel.forEach(k => localStorage.removeItem(k));
+  if (toDel.length) {
+    console.info("[purgeStrayTargetsAndLegacyBatches] removed:", toDel.length, toDel);
+  }
 }

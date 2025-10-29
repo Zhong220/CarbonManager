@@ -128,7 +128,7 @@ export default function StageBlock({ stage, open, onToggle, onStepClick }: Props
 
         {stage.extras.length>0 && (
           <>
-            <Toggle onClick={onToggle}>{open?"▲ 收合附加項目":"▼ 附加項目"}</Toggle>
+            <Toggle onClick={onToggle}>{open?"▲ 收合備註":"▼ 備註"}</Toggle>
             {open && (
               <ExtraWrap>
                 {stage.extras.map(e=>(

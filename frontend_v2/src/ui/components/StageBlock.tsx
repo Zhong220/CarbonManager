@@ -1,45 +1,150 @@
+// src/ui/components/StageBlock.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Modal from "@/ui/components/Modal";
 import {
   StageConfig,
   FixedStageId,
   UserStep,
   StepTag,
 } from "@/utils/lifecycleTypes";
+import {
+  loadStageConfig,
+  saveStageConfig,
+  loadRecords,
+  saveRecords,
+  ensureStepOrderFromSteps,
+  saveStepOrder,
+  getCurrentShopIdSafe,
+} from "@/utils/storage";
 
-/** Arrow 外觀設定 */
+/** Arrow 外觀設定（沿用） */
 type ArrowType = "line" | "chevron" | "triangle" | "dashed";
-
 const ARROW_CFG = {
-  type: "line" as ArrowType, // "line" | "chevron" | "triangle" | "dashed"
-  color: "#ffffffff", // 顏色
-  stroke: 2, // 線條粗細(px)
-  opacity: 1, // 透明度 0~1
-  head: 4, // 箭頭頭部長度(px)（line/dashed/triangle 用）
-  scale: 1.8, // 箭頭相對 gap 的比例（1=剛好置中；>1 更長）
-  dash: "3 3", // 只在 dashed 模式使用：虛線樣式
-  offsetY: 0, // 垂直微調（px，正數往下）
+  type: "line" as ArrowType,
+  color: "#ffffff",
+  stroke: 2,
+  opacity: 1,
+  head: 4,
+  scale: 1.8,
+  dash: "3 3",
+  offsetY: 0,
 };
 
 type Props = {
   stage: StageConfig;
+  productId: string; // ★ 用來識別 step_order 與讀寫該商品資料
   readOnly?: boolean;
   onStepClick: (stageId: FixedStageId, step: UserStep) => void;
   onAddStep: (stageId: FixedStageId, label: string, tag: StepTag) => void;
-  /** 線性重排：把 sourceId 插到 targetId 之前；targetId 為 null 代表插到最後 */
   onReorderStep: (
     stageId: FixedStageId,
     sourceId: string,
     targetId: string | null
   ) => void;
+  onRenameStep?: (
+    stageId: FixedStageId,
+    stepId: string,
+    newLabel: string
+  ) => void;
+  onDeleteStep?: (
+    stageId: FixedStageId,
+    stepId: string,
+    stepLabel: string,
+    deleteAlsoRecords: boolean
+  ) => void;
 };
 
-/** Tag 顯示控制（固定高度，避免卡片高低不一） */
+/** Tag 顯示控制 */
 const TAG_MAX_LINES = 2;
-const TAG_LINE_HEIGHT = 14; // px
-const TAG_FONT_SIZE = 12; // px
+const TAG_LINE_HEIGHT = 14;
+const TAG_FONT_SIZE = 12;
 const TAG_BOX_H = TAG_MAX_LINES * TAG_LINE_HEIGHT;
 
-/** Viewport 偵測（SSR 安全） */
+/* ---------------- helpers：影響筆數、改名、刪除（改為帶 productId/shopId） ---------------- */
+
+function recordMatchStep(
+  rec: any,
+  stageId: string,
+  stepId?: string,
+  stepLabel?: string
+) {
+  const stageOk = rec.stageId ? rec.stageId === stageId : rec.stage === stageId;
+  if (!stageOk) return false;
+  if (stepId && rec.stepId && rec.stepId === stepId) return true;
+  if (stepLabel) return rec.step === stepLabel || rec.stepLabel === stepLabel;
+  return false;
+}
+
+function countRecordsForStep_storage(
+  productId: string,
+  shopId: string,
+  stageId: string,
+  stepId?: string,
+  stepLabel?: string
+) {
+  const records = loadRecords(productId, shopId) || [];
+  return records.filter((r: any) =>
+    recordMatchStep(r, stageId, stepId, stepLabel)
+  ).length;
+}
+
+function renameStep_storage(
+  productId: string,
+  shopId: string,
+  stageId: FixedStageId,
+  stepId: string,
+  newLabel: string
+) {
+  const cfg: StageConfig[] = loadStageConfig(shopId, productId) || [];
+  const stage = cfg.find((s) => s.id === stageId);
+  if (!stage) return;
+  const target = stage.steps.find((s) => s.id === stepId);
+  if (!target) return;
+  target.label = newLabel;
+  saveStageConfig(shopId, productId, cfg);
+}
+
+function deleteStep_storage(
+  productId: string,
+  shopId: string,
+  stageId: FixedStageId,
+  stepId: string,
+  stepLabel: string,
+  deleteAlsoRecords: boolean
+) {
+  const cfg: StageConfig[] = loadStageConfig(shopId, productId) || [];
+  const stage = cfg.find((s) => s.id === stageId);
+  if (!stage) return;
+
+  stage.steps = stage.steps.filter((s) => s.id !== stepId);
+  saveStageConfig(shopId, productId, cfg);
+
+  const records = loadRecords(productId, shopId) || [];
+  if (deleteAlsoRecords) {
+    const kept = records.filter(
+      (r: any) => !recordMatchStep(r, stageId, stepId, stepLabel)
+    );
+    saveRecords(productId, kept, shopId);
+  } else {
+    const kept = records.map((r: any) => {
+      if (recordMatchStep(r, stageId, stepId, stepLabel)) {
+        const mark = " (已刪除的步驟)";
+        if (typeof r.step === "string" && !String(r.step).includes("已刪除"))
+          r.step = String(r.step) + mark;
+        if (
+          typeof r.stepLabel === "string" &&
+          !String(r.stepLabel).includes("已刪除")
+        )
+          r.stepLabel = String(r.stepLabel) + mark;
+      }
+      return r;
+    });
+    saveRecords(productId, kept, shopId);
+  }
+}
+
+/* ---------------- component ---------------- */
+
 function useViewportFlags() {
   const get = () => {
     if (typeof window === "undefined")
@@ -56,7 +161,6 @@ function useViewportFlags() {
   return flags;
 }
 
-/** 觸控環境判定（行動裝置） */
 function useIsTouchLike() {
   const get = () => {
     if (typeof window === "undefined") return false;
@@ -74,91 +178,106 @@ function useIsTouchLike() {
   return v;
 }
 
+/* ---------- 工具：重排陣列 ---------- */
+function moveId(list: string[], id: string, beforeId: string | null): string[] {
+  const next = list.slice();
+  const from = next.indexOf(id);
+  if (from === -1) return list;
+  next.splice(from, 1);
+  if (beforeId == null) next.push(id);
+  else {
+    const at = next.indexOf(beforeId);
+    next.splice(at >= 0 ? at : next.length, 0, id);
+  }
+  return next;
+}
+
 export default function StageBlock({
   stage,
+  productId,
   readOnly,
   onStepClick,
   onAddStep,
   onReorderStep,
+  onRenameStep,
+  onDeleteStep,
 }: Props) {
   const { isMobile, isTablet } = useViewportFlags();
   const isTouch = useIsTouchLike();
 
+  const shopId = getCurrentShopIdSafe();
+
+  // 初始化排序
+  const initialOrder = useMemo(
+    () => ensureStepOrderFromSteps(shopId, productId, stage.id, stage.steps),
+    [shopId, productId, stage.id, stage.steps]
+  );
+  const [orderedIds, setOrderedIds] = useState<string[]>(initialOrder);
+  const orderedSteps = useMemo(() => {
+    const map = new Map(stage.steps.map((s) => [s.id, s]));
+    return orderedIds.map((id) => map.get(id)).filter(Boolean) as UserStep[];
+  }, [stage.steps, orderedIds]);
+
+  useEffect(() => {
+    const aligned = ensureStepOrderFromSteps(
+      shopId,
+      productId,
+      stage.id,
+      stage.steps
+    );
+    setOrderedIds(aligned);
+  }, [shopId, productId, stage.id, stage.steps]);
+
+  /* ----------- 原有狀態保持不動 ----------- */
   const [showAdd, setShowAdd] = useState(false);
   const [label, setLabel] = useState("");
-  const [tag, setTag] = useState<StepTag>("");
+  const [tag, setTag] = useState<StepTag>("" as StepTag);
   const [showExtras, setShowExtras] = useState(false);
-
-  // 排序模式（長按或右鍵開啟）
   const [reorderMode, setReorderMode] = useState(false);
   const longPressTimer = useRef<number | null>(null);
-
-  // 目前命中的插入索引（介於 0..N），例如 0=最前面、N=最後面
+  const [manageMode, setManageMode] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-
-  // 行動版後備：選取中的來源 stepId（tap 選取 → tap 目標）
   const [pickedId, setPickedId] = useState<string | null>(null);
-
-  // 新增表單區塊（手機開啟時自動捲到可視）
   const addPanelRef = useRef<HTMLDivElement | null>(null);
-
+  const [editing, setEditing] = useState<UserStep | null>(null);
+  const [newName, setNewName] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteAlsoRecords, setDeleteAlsoRecords] = useState(false);
   const canAdd = !readOnly;
 
-  // 視覺尺寸
   const S = useMemo(() => {
-    if (isMobile) {
-      return {
-        cardW: 56,
-        cardH: 132,
-        dzW: 18,
-        gap: 8,
-        radius: 16,
-        leftBarW: 56,
-      };
-    }
-    if (isTablet) {
-      return {
-        cardW: 64,
-        cardH: 156,
-        dzW: 24,
-        gap: 10,
-        radius: 18,
-        leftBarW: 66,
-      };
-    }
-    return {
-      cardW: 68,
-      cardH: 168,
-      dzW: 28,
-      gap: 10,
-      radius: 18,
-      leftBarW: 72,
-    };
+    if (isMobile)
+      return { cardW: 56, cardH: 132, dzW: 18, gap: 8, radius: 16 };
+    if (isTablet)
+      return { cardW: 64, cardH: 156, dzW: 24, gap: 10, radius: 18 };
+    return { cardW: 68, cardH: 168, dzW: 28, gap: 10, radius: 18 };
   }, [isMobile, isTablet]);
 
-  // 線性渲染
-  const flatSteps = useMemo(() => stage.steps, [stage.steps]);
+  const affectedCount = useMemo(() => {
+    if (!editing) return 0;
+    return countRecordsForStep_storage(productId, shopId, stage.id, editing.id, editing.label);
+  }, [editing, stage.id, productId, shopId]);
 
-  // ========== 新增步驟 ==========
+  // 新增步驟
   const handleAdd = () => {
     const name = label.trim();
     if (!name || !tag) return;
     onAddStep(stage.id as FixedStageId, name, tag);
     setLabel("");
-    setTag("");
+    setTag("" as StepTag);
     setShowAdd(false);
   };
 
-  useEffect(() => {
-    if (isMobile && showAdd && addPanelRef.current) {
-      addPanelRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-      });
-    }
-  }, [isMobile, showAdd]);
+  // ======== 排序寫入邏輯 ========
+  const applyNewOrder = (sourceId: string, targetId: string | null) => {
+    const next = moveId(orderedIds, sourceId, targetId);
+    setOrderedIds(next);
+    saveStepOrder(shopId, productId, stage.id, next);
+    onReorderStep?.(stage.id, sourceId, targetId);
+  };
 
-  // ========== DnD 基礎（桌機） ==========
+  /* --------- 以下原本 DnD / 管理模式邏輯保持不變 --------- */
+
   const setPayload = (ev: React.DragEvent, payload: any) => {
     const txt = JSON.stringify(payload);
     try {
@@ -167,7 +286,6 @@ export default function StageBlock({
     } catch {}
     ev.dataTransfer.effectAllowed = "move";
   };
-
   const readPayload = (ev: React.DragEvent) => {
     let raw = "";
     try {
@@ -185,24 +303,21 @@ export default function StageBlock({
       return null;
     }
   };
-
   const onDragStart = (ev: React.DragEvent, st: UserStep) => {
-    if (readOnly || !reorderMode || isTouch) return; // 觸控環境不使用原生 DnD
+    if (readOnly || !reorderMode || isTouch) return;
     setPayload(ev, { stageId: stage.id, stepId: st.id });
   };
-
   const onDragOverAllow = (ev: React.DragEvent) => {
     if (!reorderMode || isTouch) return;
     ev.preventDefault();
     ev.dataTransfer.dropEffect = "move";
   };
 
-  // ========== 進入/離開排序模式 ==========
   const armLongPress = (stepId?: string) => {
     if (readOnly || reorderMode) return;
     longPressTimer.current = window.setTimeout(() => {
+      setManageMode(false);
       setReorderMode(true);
-      // 行動版：長按直接選取來源
       if (isTouch && stepId) setPickedId(stepId);
     }, 350);
   };
@@ -215,26 +330,27 @@ export default function StageBlock({
   const handleContextMenu = (e: React.MouseEvent) => {
     if (readOnly) return;
     e.preventDefault();
+    setManageMode(false);
     setReorderMode(true);
   };
 
-  // ========== 行動版後備：執行一次「選取來源 → 插入目標」 ==========
+  // 行動版：一次選取 → 插入
   const commitPickToTargetIndex = (targetIndex: number) => {
     if (!reorderMode || !pickedId) return;
     const targetId =
-      targetIndex >= flatSteps.length ? null : flatSteps[targetIndex].id;
+      targetIndex >= orderedSteps.length ? null : orderedSteps[targetIndex].id;
     if (targetId === pickedId) {
       setPickedId(null);
       return;
     }
-    onReorderStep(stage.id, pickedId, targetId);
+    applyNewOrder(pickedId, targetId);
     setPickedId(null);
   };
 
-  // ========== Drop Zone ==========
+  // DropZone
   const DropZone: React.FC<{ index: number }> = ({ index }) => {
     if (!reorderMode) return null;
-    const isTail = index === flatSteps.length;
+    const isTail = index === orderedSteps.length;
     const active = hoverIndex === index;
 
     return (
@@ -246,16 +362,16 @@ export default function StageBlock({
         onDragEnter={() => setHoverIndex(index)}
         onDragLeave={() => setHoverIndex((v) => (v === index ? null : v))}
         onDrop={(e) => {
-          if (isTouch) return; // 行動交互用點選
+          if (isTouch) return;
           e.preventDefault();
           const payload = readPayload(e);
           setHoverIndex(null);
           if (!payload) return;
           const { stageId, stepId } = payload;
-          if (stageId !== stage.id) return; // 僅限同 stage
-          const targetId = isTail ? null : flatSteps[index]?.id ?? null;
+          if (stageId !== stage.id) return;
+          const targetId = isTail ? null : orderedSteps[index]?.id ?? null;
           if (targetId === stepId) return;
-          onReorderStep(stage.id, stepId, targetId);
+          applyNewOrder(stepId, targetId);
         }}
         onClick={() => {
           if (isTouch && pickedId) commitPickToTargetIndex(index);
@@ -263,7 +379,6 @@ export default function StageBlock({
         style={{
           width: S.dzW,
           minWidth: S.dzW,
-          // 與卡片等高（包含 tag 區）
           height: S.cardH + 12 + TAG_BOX_H + 6,
           alignSelf: "stretch",
           borderRadius: 6,
@@ -279,12 +394,11 @@ export default function StageBlock({
           flex: "0 0 auto",
           cursor: reorderMode && isTouch ? "pointer" : "default",
         }}
-        aria-label={isTail ? "drop-tail" : "drop-between"}
       />
     );
   };
 
-  // ========== 卡片左右半邊命中（桌機 DnD） ==========
+  // 卡片左右半邊命中
   const onCardDragOver = (
     e: React.DragEvent,
     i: number,
@@ -298,7 +412,6 @@ export default function StageBlock({
     const index = e.clientX < midX ? i : i + 1;
     if (hoverIndex !== index) setHoverIndex(index);
   };
-
   const onCardDrop = (
     e: React.DragEvent,
     i: number,
@@ -311,7 +424,6 @@ export default function StageBlock({
     if (!payload) return;
     const { stageId, stepId } = payload;
     if (stageId !== stage.id) return;
-
     let targetIndex = i;
     if (el) {
       const rect = el.getBoundingClientRect();
@@ -319,321 +431,488 @@ export default function StageBlock({
       targetIndex = e.clientX < midX ? i : i + 1;
     }
     const targetId =
-      targetIndex === flatSteps.length ? null : flatSteps[targetIndex].id;
+      targetIndex === orderedSteps.length ? null : orderedSteps[targetIndex].id;
     if (targetId === stepId) return;
-    onReorderStep(stage.id, stepId, targetId);
+    applyNewOrder(stepId, targetId);
+  };
+
+  /* ---------- 編輯 / 刪除 ---------- */
+  const openEdit = (s: UserStep) => {
+    setEditing(s);
+    setNewName(s.label);
+    setDeleteAlsoRecords(false);
+  };
+  const closeEdit = () => {
+    setEditing(null);
+    setConfirmOpen(false);
+    setDeleteAlsoRecords(false);
+  };
+  const doRename = () => {
+    if (!editing) return;
+    const newLabel = newName.trim();
+    if (!newLabel) return;
+    if (onRenameStep) onRenameStep(stage.id, editing.id, newLabel);
+    else {
+      renameStep_storage(productId, shopId, stage.id, editing.id, newLabel);
+      setTimeout(() => window.location.reload(), 0);
+    }
+    closeEdit();
+  };
+  const doDelete = () => {
+    if (!editing) return;
+    if (onDeleteStep)
+      onDeleteStep(stage.id, editing.id, editing.label, deleteAlsoRecords);
+    else {
+      deleteStep_storage(productId, shopId, stage.id, editing.id, editing.label, deleteAlsoRecords);
+      setTimeout(() => window.location.reload(), 0);
+    }
+    closeEdit();
   };
 
   return (
-    <div
-      style={{
-        background: "#ffffff",
-        borderRadius: 18,
-        padding: 0,
-        margin: isMobile ? 10 : 12,
-        border: "1px solid #cde5cd",
-        boxShadow: "0 2px 8px rgba(0,0,0,.06)",
-        overflow: "hidden",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "stretch" }}>
-        {/* 左側縱向標籤 */}
-        <div
+    <section style={{ padding: isMobile ? "8px 6px" : "10px 8px" }}>
+      {/* ===== 標題列 ===== */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          margin: "4px 6px 8px",
+        }}
+      >
+        <span
+          aria-hidden
           style={{
-            width: S.leftBarW,
-            background: "#e8f5e9",
-            borderRight: "1px solid #cde5cd",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            writingMode: "vertical-rl" as any,
-            textOrientation: "mixed" as any,
-            fontWeight: 700,
-            color: "#2e7d32",
-            letterSpacing: "2px",
-            fontSize: isMobile ? 13 : 14,
-            flex: "0 0 auto",
+            width: 3,
+            height: 18,
+            borderRadius: 2,
+            background: "#8bc84f",
+          }}
+        />
+        <h3
+          style={{
+            margin: 0,
+            fontSize: isMobile ? 15 : 16,
+            fontWeight: 600,
+            letterSpacing: 0.2,
+            color: "#2f6b35",
           }}
         >
           {stage.title}
-        </div>
+        </h3>
 
-        {/* 右側內容 */}
-        <div
-          style={{
-            flex: 1,
-            padding: "14px 16px 12px 16px",
-            overflowX: "hidden",
-          }}
-        >
-          {!readOnly && (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 6,
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "#2e7d32",
-                  opacity: reorderMode ? 1 : 0.7,
-                }}
-              >
-                {reorderMode
-                  ? isTouch
-                    ? pickedId
-                      ? "選取中，可點選至指定位置："
-                      : "點選要移動的步驟"
-                    : "拖到綠色虛線或卡片的左/右半邊即可插入"
-                  : isTouch
-                  ? "長按任一卡片進入排序模式"
-                  : "長按或右鍵進入排序模式"}
-              </div>
-              {reorderMode && (
-                <button
-                  onClick={() => {
-                    setReorderMode(false);
-                    setHoverIndex(null);
-                    setPickedId(null);
-                  }}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 6,
-                    height: isMobile ? 28 : 30,
-                    padding: isMobile ? "0 10px" : "0 12px",
-                    fontSize: isMobile ? 12 : 13,
-                    lineHeight: 1,
-                    background: "#a5d6a7",
-                    border: "1px solid #81c784",
-                    borderRadius: 999,
-                    color: "#1b5e20",
-                    cursor: "pointer",
-                  }}
-                  title="完成排序"
-                >
-                  完成
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* 卡片列 */}
-          <div
-            style={{
-              display: "flex",
-              gap: S.gap,
-              flexWrap: "nowrap",
-              overflowX: "auto",
-              paddingBottom: 4,
-              alignItems: "center",
-            }}
-          >
-            {/* 只有排序模式才顯示頭部 DropZone */}
-            {reorderMode && <DropZone index={0} />}
-
-            {flatSteps.length === 0 && (
-              <div style={{ opacity: 0.6, padding: "6px 2px" }}>
-                目前尚未建立步驟
-              </div>
-            )}
-
-            {flatSteps.map((st, i) => (
-              <React.Fragment key={st.id}>
-                <CardWithHalfDrop
-                  step={st}
-                  index={i}
-                  readOnly={!!readOnly}
-                  reorderMode={reorderMode}
-                  hoverIndex={hoverIndex}
-                  onDragStart={onDragStart}
-                  onCardDragOver={onCardDragOver}
-                  onCardDrop={onCardDrop}
-                  onStepClick={onStepClick}
-                  stageId={stage.id}
-                  armLongPress={() => armLongPress(st.id)}
-                  cancelLongPress={cancelLongPress}
-                  handleContextMenu={handleContextMenu}
-                  size={S}
-                  isTouch={isTouch}
-                  pickedId={pickedId}
-                  setPickedId={setPickedId}
-                  onTapInsertBefore={() => commitPickToTargetIndex(i)}
-                  /* ✅ 平常顯示箭頭（左側）；排序模式隱藏；第 0 張沒有箭頭 */
-                  showArrowLeft={!reorderMode && i > 0}
-                  gap={S.gap}
-                />
-
-                {/* 只有排序模式才插入中間 DropZone */}
-                {reorderMode && i < flatSteps.length - 1 && (
-                  <DropZone index={i + 1} />
-                )}
-              </React.Fragment>
-            ))}
-
-            {/* 只有排序模式才顯示尾端 DropZone */}
-            {reorderMode && flatSteps.length > 0 && (
-              <DropZone index={flatSteps.length} />
-            )}
-          </div>
-
-          {/* 新增 & 附加 */}
-          <div
-            ref={addPanelRef}
-            style={{
-              display: "grid",
-              gridTemplateColumns: isMobile ? "1fr" : "auto 1fr auto",
-              alignItems: "center",
-              columnGap: 8,
-              rowGap: 8,
-              marginTop: 10,
-              maxWidth: "100%",
-            }}
-          >
-            {canAdd ? (
-              <>
-                {/* 觸發按鈕：固定尺寸，不撐滿 */}
-                <button
-                  onClick={() => setShowAdd((v) => !v)}
-                  style={{
-                    border: "1px solid #81c784",
-                    background: "#e8f5e9",
-                    padding: isMobile ? "8px 12px" : "6px 10px",
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    color: "#2e7d32",
-                    fontSize: isMobile ? 14 : 13,
-                    fontWeight: 600,
-                    justifySelf: "start",
-                  }}
-                >
-                  {showAdd ? "關閉" : "＋新增步驟"}
-                </button>
-
-                {/* 表單：手機直式堆疊，所有欄位都不超出容器 */}
-                {showAdd && (
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: isMobile
-                        ? "1fr"
-                        : "minmax(180px, 240px) minmax(120px, 200px) auto",
-                      columnGap: 8,
-                      rowGap: 8,
-                      alignItems: "center",
-                      gridColumn: isMobile ? "1 / -1" : "2 / 3",
-                      minWidth: 0,
-                      maxWidth: "100%",
-                    }}
-                  >
-                    <input
-                      placeholder="步驟名稱"
-                      value={label}
-                      onChange={(e) => setLabel(e.target.value)}
-                      style={{
-                        padding: "10px",
-                        borderRadius: 8,
-                        border: "1px solid #a5d6a7",
-                        background: "#ffffff",
-                        width: "100%",
-                        minWidth: 0,
-                        boxSizing: "border-box",
-                      }}
-                    />
-                    <select
-                      value={tag}
-                      onChange={(e) => setTag(e.target.value)}
-                      style={{
-                        padding: "10px",
-                        borderRadius: 8,
-                        border: "1px solid #a5d6a7",
-                        background: "#ffffff",
-                        width: "100%",
-                        minWidth: 0,
-                        boxSizing: "border-box",
-                      }}
-                    >
-                      <option value="" disabled>
-                        選擇標籤
-                      </option>
-                      {(stage.allowedTags ?? []).map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={handleAdd}
-                      disabled={!label.trim() || !tag}
-                      style={{
-                        background:
-                          !label.trim() || !tag ? "#c8e6c9" : "#4caf50",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: 8,
-                        padding: isMobile ? "10px 12px" : "8px 12px",
-                        fontWeight: 700,
-                        cursor:
-                          !label.trim() || !tag ? "not-allowed" : "pointer",
-                        width: isMobile ? "100%" : "auto",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      新增
-                    </button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <span />
-            )}
-
-            {/* 附加項目開關：手機放在最右、自然換行 */}
+        {!readOnly && (
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            {/* 管理模式切換（新增） */}
             <button
-              onClick={() => setShowExtras((v) => !v)}
+              type="button"
+              onClick={() => {
+                // 互斥：開啟管理 → 關閉排序與相關狀態
+                if (!manageMode) {
+                  setReorderMode(false);
+                  setHoverIndex(null);
+                  setPickedId(null);
+                }
+                setManageMode((v) => !v);
+              }}
               style={{
-                background: "transparent",
-                border: "none",
-                color: "#388e3c",
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: "1px solid #cbd5c0",
+                background: manageMode ? "#2b5a30" : "#fff",
+                color: manageMode ? "#fff" : "#2b5a30",
                 cursor: "pointer",
-                justifySelf: "end",
-                whiteSpace: "nowrap",
               }}
             >
-              {showExtras ? "▴ 隱藏附加項目" : "▾ 附加項目"}
+              {manageMode ? "完成管理" : "管理模式"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (reorderMode) {
+                  setReorderMode(false);
+                  setHoverIndex(null);
+                  setPickedId(null);
+                } else {
+                  // 互斥：開排序前關閉管理
+                  setManageMode(false);
+                  setReorderMode(true);
+                }
+              }}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: "1px solid #cbd5c0",
+                background: "#fff",
+                color: "#2b5a30",
+                cursor: "pointer",
+              }}
+            >
+              {reorderMode ? "完成排序" : "排序"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowAdd((v) => !v)}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: "1px dashed #9cc88a",
+                background: "#f7fbf7",
+                color: "#2b5a30",
+                cursor: "pointer",
+              }}
+            >
+              ＋ 新增步驟
             </button>
           </div>
-
-          {showExtras && (
-            <div
-              style={{
-                marginTop: 8,
-                padding: "10px 12px",
-                background: "#f1f8e9",
-                border: "1px dashed #a5d6a7",
-                borderRadius: 8,
-                color: "#2e7d32",
-              }}
-            >
-              （這裡可以放「包裝資材／廢棄物／能源資源／運輸」等額外記錄或說明區塊）
-            </div>
-          )}
-        </div>
+        )}
       </div>
-    </div>
+
+      {/* 模式說明 */}
+      {!readOnly && (
+        <div
+          style={{
+            margin: "0 6px 6px",
+            fontSize: 12,
+            color: "#2e7d32",
+            opacity: reorderMode || manageMode ? 0.95 : 0.7,
+          }}
+        >
+          {manageMode
+            ? "管理模式：點擊任何步驟可重新命名或刪除"
+            : reorderMode
+            ? isTouch
+              ? pickedId
+                ? "已選取，點擊卡片或虛線區插入位置"
+                : "點選要移動的步驟"
+              : "拖到綠色虛線或卡片左/右半邊即可插入"
+            : isTouch
+            ? "長按任一卡片可進入排序模式"
+            : "長按或右鍵可進入排序模式"}
+        </div>
+      )}
+
+      {/* 卡片列 */}
+      <div
+        style={{
+          display: "flex",
+          gap: S.gap,
+          flexWrap: "nowrap",
+          overflowX: "auto",
+          padding: "0 6px 4px",
+          alignItems: "center",
+        }}
+      >
+        {reorderMode && <DropZone index={0} />}
+
+        {orderedSteps.length === 0 && (
+          <div
+            style={{
+              padding: "6px 0",
+              fontSize: 12,
+              color: "#879693",
+              lineHeight: 1.6,
+            }}
+          >
+            目前尚未建立步驟
+          </div>
+        )}
+
+        {orderedSteps.map((st, i) => (
+          <React.Fragment key={st.id}>
+            <CardWithHalfDrop
+              step={st}
+              index={i}
+              readOnly={!!readOnly}
+              reorderMode={reorderMode}
+              // 新增：管理模式切換
+              manageMode={manageMode}
+              hoverIndex={hoverIndex}
+              onDragStart={onDragStart}
+              onCardDragOver={onCardDragOver}
+              onCardDrop={onCardDrop}
+              onStepClick={onStepClick}
+              stageId={stage.id}
+              armLongPress={() => armLongPress(st.id)}
+              cancelLongPress={cancelLongPress}
+              handleContextMenu={handleContextMenu}
+              size={{ cardW: S.cardW, cardH: S.cardH, radius: S.radius }}
+              isTouch={isTouch}
+              pickedId={pickedId}
+              setPickedId={setPickedId}
+              onTapInsertBefore={() => commitPickToTargetIndex(i)}
+              showArrowLeft={!reorderMode && i > 0}
+              gap={S.gap}
+              onOpenEdit={() => openEdit(st)} // 管理模式下會用到
+            />
+            {reorderMode && i < orderedSteps.length - 1 && (
+              <DropZone index={i + 1} />
+            )}
+          </React.Fragment>
+        ))}
+
+        {reorderMode && orderedSteps.length > 0 && (
+          <DropZone index={orderedSteps.length} />
+        )}
+      </div>
+
+      {/* 新增表單（收合） */}
+      {canAdd && showAdd && (
+        <div
+          ref={addPanelRef}
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile
+              ? "1fr"
+              : "minmax(180px, 240px) minmax(120px, 200px) auto",
+            columnGap: 8,
+            rowGap: 8,
+            alignItems: "center",
+            margin: "8px 6px 0",
+            minWidth: 0,
+            maxWidth: "100%",
+          }}
+        >
+          <input
+            placeholder="步驟名稱"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            style={{
+              padding: "10px",
+              borderRadius: 8,
+              border: "1px solid #a5d6a7",
+              background: "#fff",
+              width: "100%",
+              minWidth: 0,
+              boxSizing: "border-box",
+            }}
+          />
+          <select
+            value={tag}
+            onChange={(e) => setTag(e.target.value as StepTag)}
+            style={{
+              padding: "10px",
+              borderRadius: 8,
+              border: "1px solid #a5d6a7",
+              background: "#fff",
+              width: "100%",
+              minWidth: 0,
+              boxSizing: "border-box",
+            }}
+          >
+            <option value="" disabled>
+              選擇標籤
+            </option>
+            {(stage.allowedTags ?? []).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleAdd}
+            disabled={!label.trim() || !tag}
+            style={{
+              background: !label.trim() || !tag ? "#c8e6c9" : "#4caf50",
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: isMobile ? "10px 12px" : "8px 12px",
+              fontWeight: 700,
+              cursor: !label.trim() || !tag ? "not-allowed" : "pointer",
+              width: isMobile ? "100%" : "auto",
+              whiteSpace: "nowrap",
+            }}
+          >
+            新增
+          </button>
+        </div>
+      )}
+
+      {/* 附加項目開關 + 面板（可選） */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          margin: "8px 6px 0",
+        }}
+      >
+        <button
+          onClick={() => setShowExtras((v) => !v)}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "#388e3c",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {showExtras ? "▴ 隱藏附加項目" : "▾ 附加項目"}
+        </button>
+      </div>
+
+      {showExtras && (
+        <div
+          style={{
+            margin: "6px 6px 0",
+            padding: "10px 12px",
+            background: "#f1f8e9",
+            border: "1px dashed #a5d6a7",
+            borderRadius: 8,
+            color: "#2e7d32",
+          }}
+        >
+          （這裡可以放「包裝資材／廢棄物／能源資源／運輸」等額外記錄或說明區塊）
+        </div>
+      )}
+
+      {/* 細分隔線 */}
+      <hr
+        aria-hidden
+        style={{
+          border: "none",
+          borderTop: "1px solid #e8eee8",
+          margin: "10px 0 2px",
+        }}
+      />
+
+      {/* ====== 編輯步驟 Modal ====== */}
+      <Modal open={!!editing} onClose={closeEdit} title="編輯步驟">
+        {editing && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 13, color: "#2e7d32" }}>步驟名稱</span>
+              <input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="輸入新的名稱"
+                style={{
+                  padding: "10px",
+                  borderRadius: 8,
+                  border: "1px solid #a5d6a7",
+                }}
+              />
+            </label>
+
+            <div style={{ fontSize: 12, color: "#2e7d32" }}>
+              關聯歷史紀錄：<b>{affectedCount}</b> 筆
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={doRename}
+                style={{
+                  background: "#43a047",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                儲存名稱
+              </button>
+              <button
+                onClick={() => setConfirmOpen(true)}
+                style={{
+                  background: "#ffeaea",
+                  color: "#c62828",
+                  border: "1px solid #ffcdd2",
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                刪除此步驟…
+              </button>
+              <button
+                onClick={closeEdit}
+                style={{
+                  background: "#fff",
+                  color: "#2e7d32",
+                  border: "1px solid #a5d6a7",
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                }}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ====== 刪除確認 Modal ====== */}
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="確認刪除步驟"
+      >
+        {editing && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div>
+              要刪除步驟「<b>{editing.label}</b>」嗎？
+            </div>
+            <div style={{ fontSize: 12, color: "#2e7d32" }}>
+              有 <b>{affectedCount}</b> 筆歷史紀錄屬於此步驟。
+            </div>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={deleteAlsoRecords}
+                onChange={(e) => setDeleteAlsoRecords(e.target.checked)}
+              />
+              同時刪除這些歷史紀錄
+            </label>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={doDelete}
+                style={{
+                  background: "#d32f2f",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                確認刪除
+              </button>
+              <button
+                onClick={() => setConfirmOpen(false)}
+                style={{
+                  background: "#fff",
+                  color: "#2e7d32",
+                  border: "1px solid #a5d6a7",
+                  borderRadius: 8,
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                }}
+              >
+                返回
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </section>
   );
 }
 
-/** 卡片（桌機：拖曳；手機：點選排序） */
+/** 卡片（保留原本交互；管理模式下點擊即開編輯） */
 function CardWithHalfDrop(props: {
   step: UserStep;
   index: number;
   readOnly: boolean;
   reorderMode: boolean;
+  manageMode: boolean; // 新增
   hoverIndex: number | null;
   onDragStart: (e: React.DragEvent, st: UserStep) => void;
   onCardDragOver: (
@@ -656,16 +935,16 @@ function CardWithHalfDrop(props: {
   pickedId: string | null;
   setPickedId: (id: string | null) => void;
   onTapInsertBefore: () => void;
-  /** 左側箭頭（僅一般模式） */
   showArrowLeft?: boolean;
-  /** 外層 gap（用來計算箭頭位置） */
   gap: number;
+  onOpenEdit: () => void;
 }) {
   const {
     step,
     index,
     readOnly,
     reorderMode,
+    manageMode,
     hoverIndex,
     onDragStart,
     onCardDragOver,
@@ -682,6 +961,7 @@ function CardWithHalfDrop(props: {
     onTapInsertBefore,
     showArrowLeft,
     gap,
+    onOpenEdit,
   } = props;
 
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -689,7 +969,6 @@ function CardWithHalfDrop(props: {
   const showRight = hoverIndex === index + 1;
   const isPicked = pickedId === step.id;
 
-  // 箭頭寬度：依 gap 與 scale 調整，最低 8px 最高 14px；置中到兩卡之間
   const ARROW_W = Math.max(8, Math.min(14, gap * ARROW_CFG.scale));
   const arrowSideOffset = -(gap / 2 - ARROW_W / 2);
   const HEAD = Math.min(Math.max(ARROW_CFG.head, 3), 8);
@@ -703,7 +982,6 @@ function CardWithHalfDrop(props: {
         alignItems: "center",
       }}
     >
-      {/* 左側指示線（桌機拖曳預視） */}
       {reorderMode && !isTouch && showLeft && (
         <div
           style={{
@@ -721,7 +999,7 @@ function CardWithHalfDrop(props: {
       <button
         ref={btnRef}
         type="button"
-        draggable={!readOnly && reorderMode && !isTouch}
+        draggable={!readOnly && reorderMode && !isTouch && !manageMode}
         onDragStart={(e) => onDragStart(e, step)}
         onDragOver={(e) => onCardDragOver(e, index, btnRef.current)}
         onDrop={(e) => onCardDrop(e, index, btnRef.current)}
@@ -732,11 +1010,14 @@ function CardWithHalfDrop(props: {
         onContextMenu={handleContextMenu}
         onClick={() => {
           if (readOnly) return;
-          if (!reorderMode) {
-            onStepClick(stageId, step);
+          if (manageMode) {
+            onOpenEdit(); // 管理模式：直接開編輯
             return;
           }
-          // 排序模式下（行動）：已選取來源 → 點此卡 = 插到此卡之前；否則選取此卡為來源
+          if (!reorderMode) {
+            onStepClick(stageId, step); // 一般模式：進入 step 詳情
+            return;
+          }
           if (isTouch) {
             if (pickedId) onTapInsertBefore();
             else setPickedId(step.id);
@@ -747,13 +1028,19 @@ function CardWithHalfDrop(props: {
           minWidth: S.cardW,
           height: S.cardH,
           borderRadius: S.radius,
-          border: isPicked ? "2px solid #43a047" : "1px solid #a5d6a7",
+          border: manageMode
+            ? "2px solid #2b5a30" // 管理模式加強提示
+            : isPicked
+            ? "2px solid #43a047"
+            : "1px solid #a5d6a7",
           background: isPicked
             ? "linear-gradient(180deg, #eaf7ec 0%, #d0ecd2 100%)"
             : "linear-gradient(180deg, #e8f5e9 0%, #c8e6c9 100%)",
           boxShadow: "inset 0 1px 0 rgba(255,255,255,.45)",
           cursor: readOnly
             ? "default"
+            : manageMode
+            ? "pointer"
             : reorderMode
             ? isTouch
               ? "pointer"
@@ -775,7 +1062,6 @@ function CardWithHalfDrop(props: {
         {step.label}
       </button>
 
-      {/* 右側指示線（桌機拖曳預視） */}
       {reorderMode && !isTouch && showRight && (
         <div
           style={{
@@ -790,7 +1076,6 @@ function CardWithHalfDrop(props: {
         />
       )}
 
-      {/* Tag：兩行夾斷 + 固定高度，所有卡片等高 */}
       <div
         title={`#${step.tag}`}
         style={{
@@ -812,7 +1097,7 @@ function CardWithHalfDrop(props: {
         #{step.tag}
       </div>
 
-      {/* ✅ 左側箭頭（一般模式顯示；排序模式隱藏；第 0 張沒有） */}
+      {/* 左側箭頭（一般模式） */}
       {showArrowLeft && (
         <svg
           width={ARROW_W}
@@ -821,7 +1106,7 @@ function CardWithHalfDrop(props: {
           style={{
             position: "absolute",
             top: S.cardH / 2 - 6 + ARROW_CFG.offsetY,
-            left: arrowSideOffset, // 放在左邊 gap 中央
+            left: arrowSideOffset,
             pointerEvents: "none",
             opacity: ARROW_CFG.opacity,
           }}
@@ -830,9 +1115,8 @@ function CardWithHalfDrop(props: {
             const c = ARROW_CFG.color;
             const w = ARROW_CFG.stroke;
             const x1 = 1;
-            const x2 = ARROW_W - HEAD; // 箭頭頭部開始位置
+            const x2 = ARROW_W - HEAD;
             const tip = ARROW_W - 1;
-
             switch (ARROW_CFG.type) {
               case "chevron":
                 return (
@@ -879,7 +1163,7 @@ function CardWithHalfDrop(props: {
                     />
                   </>
                 );
-              default: // "line"
+              default:
                 return (
                   <>
                     <path

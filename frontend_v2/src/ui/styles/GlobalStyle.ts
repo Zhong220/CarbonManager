@@ -3,47 +3,41 @@ import { createGlobalStyle } from "styled-components";
 export const GlobalStyle = createGlobalStyle`
   *, *::before, *::after { box-sizing: border-box; }
 
-  html, body { height: 100%; } /* 根元素 100% 高度 */
+  :root{
+    --bg:        #EEF3EE;   /* 頁面底 */
+    --card:      #FFFFFF;   /* 卡片 */
+    --line:      #DFE7DA;   /* 邊線 */
+    --text:      #1F2D1E;   /* 主要文字 */
+    --muted:     #647165;   /* 次要文字 */
+    --accent:    #66B468;   /* 主色(綠) */
+    --accent-ink:#1E5A2E;   /* 主色深字 */
+    --chip:      #F3FAF1;   /* 輕量提示底 */
+    --warn:      #B00020;
 
-  body {
-    min-height: 100svh;           /* 實際可視高度，避免 1~2px 溢出 */
-    margin: 0;
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto;
-    color: #222;
-    background: #e9eee8;
-    overflow-x: clip;              /* 防水平捲動 */
+    --radius-sm: 10px;
+    --radius:    14px;
+    --radius-lg: 18px;
+    --shadow:    0 8px 24px rgba(0,0,0,.12);
+
+    --space-1: 6px;
+    --space-2: 10px;
+    --space-3: 14px;
+    --space-4: 18px;
+    --space-5: 24px;
+
+    --shell-max: 1080px;   /* 內容最大寬 */
   }
 
-  img, svg, video { max-width: 100%; height: auto; }
-
-  /* 每頁自己的外殼（App 外層不要再包另一個殼） */
-  .PageShell {
-    /* 用 flex 垂直置中內容，並避免使用外距造成溢出 */
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-
-    /* 視口高度（含安全區）；用 box-model 計算內距，不會多 1px */
+  html, body { height: 100%; }
+  body{
     min-height: 100svh;
-
-    /* 內距控制上下留白，取代子元素 margin */
-    padding-top: calc(var(--header-h) + var(--safe-top) + 16px);
-    padding-bottom: calc(24px + var(--safe-bottom));
-    padding-left: var(--h-pad);
-    padding-right: var(--h-pad);
-
-    /* 寬度限制（桌機不會被卡窄） */
-    max-width: var(--shell-max);
-    margin: 0 auto;
-
-    /* 讓殼內元素之間的距離靠 gap，而不是 margin */
-    gap: 12px;
-
-    /* clip 比 hidden 更平滑，避免陰影被截斷時卡頓 */
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto;
+    color: var(--text);
+    background: var(--bg);
     overflow-x: clip;
   }
 
-  /* Modal 在手機也不會超高 */
+  img, svg, video { max-width: 100%; height: auto; }
   .modal-card { max-height: 84dvh; overflow: auto; -webkit-overflow-scrolling: touch; }
 `;
