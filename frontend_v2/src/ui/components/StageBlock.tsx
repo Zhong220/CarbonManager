@@ -15,6 +15,10 @@ import {
   ensureStepOrderFromSteps,
   saveStepOrder,
   getCurrentShopIdSafe,
+  // ✅ 新增：使用 storage 內建的事件與操作
+  onStageConfigChanged,
+  renameStep as storageRenameStep,
+  deleteStep as storageDeleteStep,
 } from "@/utils/storage";
 
 /** Arrow 外觀設定（沿用） */
@@ -60,7 +64,7 @@ const TAG_LINE_HEIGHT = 14;
 const TAG_FONT_SIZE = 12;
 const TAG_BOX_H = TAG_MAX_LINES * TAG_LINE_HEIGHT;
 
-/* ---------------- helpers：影響筆數、改名、刪除（改為帶 productId/shopId） ---------------- */
+/* ---------------- helpers：影響筆數、改名、刪除（沿用你的查數邏輯） ---------------- */
 
 function recordMatchStep(
   rec: any,
@@ -86,61 +90,6 @@ function countRecordsForStep_storage(
   return records.filter((r: any) =>
     recordMatchStep(r, stageId, stepId, stepLabel)
   ).length;
-}
-
-function renameStep_storage(
-  productId: string,
-  shopId: string,
-  stageId: FixedStageId,
-  stepId: string,
-  newLabel: string
-) {
-  const cfg: StageConfig[] = loadStageConfig(shopId, productId) || [];
-  const stage = cfg.find((s) => s.id === stageId);
-  if (!stage) return;
-  const target = stage.steps.find((s) => s.id === stepId);
-  if (!target) return;
-  target.label = newLabel;
-  saveStageConfig(shopId, productId, cfg);
-}
-
-function deleteStep_storage(
-  productId: string,
-  shopId: string,
-  stageId: FixedStageId,
-  stepId: string,
-  stepLabel: string,
-  deleteAlsoRecords: boolean
-) {
-  const cfg: StageConfig[] = loadStageConfig(shopId, productId) || [];
-  const stage = cfg.find((s) => s.id === stageId);
-  if (!stage) return;
-
-  stage.steps = stage.steps.filter((s) => s.id !== stepId);
-  saveStageConfig(shopId, productId, cfg);
-
-  const records = loadRecords(productId, shopId) || [];
-  if (deleteAlsoRecords) {
-    const kept = records.filter(
-      (r: any) => !recordMatchStep(r, stageId, stepId, stepLabel)
-    );
-    saveRecords(productId, kept, shopId);
-  } else {
-    const kept = records.map((r: any) => {
-      if (recordMatchStep(r, stageId, stepId, stepLabel)) {
-        const mark = " (已刪除的步驟)";
-        if (typeof r.step === "string" && !String(r.step).includes("已刪除"))
-          r.step = String(r.step) + mark;
-        if (
-          typeof r.stepLabel === "string" &&
-          !String(r.stepLabel).includes("已刪除")
-        )
-          r.stepLabel = String(r.stepLabel) + mark;
-      }
-      return r;
-    });
-    saveRecords(productId, kept, shopId);
-  }
 }
 
 /* ---------------- component ---------------- */
@@ -204,29 +153,44 @@ export default function StageBlock({
 }: Props) {
   const { isMobile, isTablet } = useViewportFlags();
   const isTouch = useIsTouchLike();
-
   const shopId = getCurrentShopIdSafe();
 
-  // 初始化排序
+  // ✅ 本地 mirror：不改父層也能即時更新畫面
+  const [stageState, setStageState] = useState<StageConfig>(stage);
+  // 父層若有更新，仍然同步
+  useEffect(() => setStageState(stage), [stage]);
+
+  // 訂閱 storage 廣播：只關注當前 shop + product，抽取對應 stage
+  useEffect(() => {
+    const off = onStageConfigChanged(({ shopId: sid, productId: pid, cfg }) => {
+      if (sid !== shopId || pid !== productId) return;
+      const next = cfg.find((s) => s.id === stageState.id);
+      if (next) setStageState(next);
+    });
+    return off;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shopId, productId, stageState.id]);
+
+  // 初始化排序（用 stageState）
   const initialOrder = useMemo(
-    () => ensureStepOrderFromSteps(shopId, productId, stage.id, stage.steps),
-    [shopId, productId, stage.id, stage.steps]
+    () => ensureStepOrderFromSteps(shopId, productId, stageState.id, stageState.steps),
+    [shopId, productId, stageState.id, stageState.steps]
   );
   const [orderedIds, setOrderedIds] = useState<string[]>(initialOrder);
   const orderedSteps = useMemo(() => {
-    const map = new Map(stage.steps.map((s) => [s.id, s]));
+    const map = new Map(stageState.steps.map((s) => [s.id, s]));
     return orderedIds.map((id) => map.get(id)).filter(Boolean) as UserStep[];
-  }, [stage.steps, orderedIds]);
+  }, [stageState.steps, orderedIds]);
 
   useEffect(() => {
     const aligned = ensureStepOrderFromSteps(
       shopId,
       productId,
-      stage.id,
-      stage.steps
+      stageState.id,
+      stageState.steps
     );
     setOrderedIds(aligned);
-  }, [shopId, productId, stage.id, stage.steps]);
+  }, [shopId, productId, stageState.id, stageState.steps]);
 
   /* ----------- 原有狀態保持不動 ----------- */
   const [showAdd, setShowAdd] = useState(false);
@@ -255,14 +219,20 @@ export default function StageBlock({
 
   const affectedCount = useMemo(() => {
     if (!editing) return 0;
-    return countRecordsForStep_storage(productId, shopId, stage.id, editing.id, editing.label);
-  }, [editing, stage.id, productId, shopId]);
+    return countRecordsForStep_storage(
+      productId,
+      shopId,
+      stageState.id,
+      editing.id,
+      editing.label
+    );
+  }, [editing, stageState.id, productId, shopId]);
 
-  // 新增步驟
+  // 新增步驟（沿用傳入 callback）
   const handleAdd = () => {
     const name = label.trim();
     if (!name || !tag) return;
-    onAddStep(stage.id as FixedStageId, name, tag);
+    onAddStep(stageState.id as FixedStageId, name, tag);
     setLabel("");
     setTag("" as StepTag);
     setShowAdd(false);
@@ -272,8 +242,8 @@ export default function StageBlock({
   const applyNewOrder = (sourceId: string, targetId: string | null) => {
     const next = moveId(orderedIds, sourceId, targetId);
     setOrderedIds(next);
-    saveStepOrder(shopId, productId, stage.id, next);
-    onReorderStep?.(stage.id, sourceId, targetId);
+    saveStepOrder(shopId, productId, stageState.id, next);
+    onReorderStep?.(stageState.id as FixedStageId, sourceId, targetId);
   };
 
   /* --------- 以下原本 DnD / 管理模式邏輯保持不變 --------- */
@@ -305,7 +275,7 @@ export default function StageBlock({
   };
   const onDragStart = (ev: React.DragEvent, st: UserStep) => {
     if (readOnly || !reorderMode || isTouch) return;
-    setPayload(ev, { stageId: stage.id, stepId: st.id });
+    setPayload(ev, { stageId: stageState.id, stepId: st.id });
   };
   const onDragOverAllow = (ev: React.DragEvent) => {
     if (!reorderMode || isTouch) return;
@@ -368,7 +338,7 @@ export default function StageBlock({
           setHoverIndex(null);
           if (!payload) return;
           const { stageId, stepId } = payload;
-          if (stageId !== stage.id) return;
+          if (stageId !== stageState.id) return;
           const targetId = isTail ? null : orderedSteps[index]?.id ?? null;
           if (targetId === stepId) return;
           applyNewOrder(stepId, targetId);
@@ -423,7 +393,7 @@ export default function StageBlock({
     setHoverIndex(null);
     if (!payload) return;
     const { stageId, stepId } = payload;
-    if (stageId !== stage.id) return;
+    if (stageId !== stageState.id) return;
     let targetIndex = i;
     if (el) {
       const rect = el.getBoundingClientRect();
@@ -451,20 +421,53 @@ export default function StageBlock({
     if (!editing) return;
     const newLabel = newName.trim();
     if (!newLabel) return;
-    if (onRenameStep) onRenameStep(stage.id, editing.id, newLabel);
-    else {
-      renameStep_storage(productId, shopId, stage.id, editing.id, newLabel);
-      setTimeout(() => window.location.reload(), 0);
+
+    if (onRenameStep) {
+      onRenameStep(stageState.id, editing.id, newLabel);
+    } else {
+      // ✅ 使用 storage 內建 rename（會自動同步 step_order 並發事件）
+      storageRenameStep(shopId, productId, stageState.id, editing.id, newLabel);
+      // onStageConfigChanged 會把畫面推新，不需 reload
     }
     closeEdit();
   };
   const doDelete = () => {
     if (!editing) return;
-    if (onDeleteStep)
-      onDeleteStep(stage.id, editing.id, editing.label, deleteAlsoRecords);
-    else {
-      deleteStep_storage(productId, shopId, stage.id, editing.id, editing.label, deleteAlsoRecords);
-      setTimeout(() => window.location.reload(), 0);
+    if (onDeleteStep) {
+      onDeleteStep(stageState.id, editing.id, editing.label, deleteAlsoRecords);
+    } else {
+      // ✅ 使用 storage 內建 delete（會同步 order + 發事件）
+      storageDeleteStep(
+        shopId,
+        productId,
+        stageState.id,
+        editing.id
+      );
+      // 若勾選同時刪除紀錄，額外處理（沿用你原邏輯）
+      if (deleteAlsoRecords) {
+        const records = loadRecords(productId, shopId) || [];
+        const kept = records.filter(
+          (r: any) => !recordMatchStep(r, stageState.id, editing.id, editing.label)
+        );
+        saveRecords(productId, kept, shopId);
+      } else {
+        const records = loadRecords(productId, shopId) || [];
+        const kept = records.map((r: any) => {
+          if (recordMatchStep(r, stageState.id, editing.id, editing.label)) {
+            const mark = " (已刪除的步驟)";
+            if (typeof r.step === "string" && !String(r.step).includes("已刪除"))
+              r.step = String(r.step) + mark;
+            if (
+              typeof r.stepLabel === "string" &&
+              !String(r.stepLabel).includes("已刪除")
+            )
+              r.stepLabel = String(r.stepLabel) + mark;
+          }
+          return r;
+        });
+        saveRecords(productId, kept, shopId);
+      }
+      // onStageConfigChanged 會更新畫面；不需 reload
     }
     closeEdit();
   };
@@ -498,12 +501,12 @@ export default function StageBlock({
             color: "#2f6b35",
           }}
         >
-          {stage.title}
+          {stageState.title}
         </h3>
 
         {!readOnly && (
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            {/* 管理模式切換（新增） */}
+            {/* 管理模式切換 */}
             <button
               type="button"
               onClick={() => {
@@ -627,14 +630,14 @@ export default function StageBlock({
               index={i}
               readOnly={!!readOnly}
               reorderMode={reorderMode}
-              // 新增：管理模式切換
+              // 管理模式切換
               manageMode={manageMode}
               hoverIndex={hoverIndex}
               onDragStart={onDragStart}
               onCardDragOver={onCardDragOver}
               onCardDrop={onCardDrop}
               onStepClick={onStepClick}
-              stageId={stage.id}
+              stageId={stageState.id as FixedStageId}
               armLongPress={() => armLongPress(st.id)}
               cancelLongPress={cancelLongPress}
               handleContextMenu={handleContextMenu}
@@ -705,7 +708,7 @@ export default function StageBlock({
             <option value="" disabled>
               選擇標籤
             </option>
-            {(stage.allowedTags ?? []).map((t) => (
+            {(stageState.allowedTags ?? []).map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>

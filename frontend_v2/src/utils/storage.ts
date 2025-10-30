@@ -19,18 +19,18 @@ export interface TeaShop {
   owner: string;
 }
 
-// 字串型不可回收主鍵 + serialNo（UI 顯示用可補洞）
+// String, non-recyclable primary key + UI-friendly serialNo
 export interface Product {
-  id: string;         // e.g. "prod_3q9f..."（永不回收）
+  id: string;         // e.g. "prod_3q9f..."
   name: string;
-  serialNo?: number;  // UI 友善連號
+  serialNo?: number;  // friendly increasing number for UI
   categoryId?: string | null;
 }
 
 export interface Category {
   id: string;
   name: string;
-  order: number; // 用來排序
+  order: number; // for sorting
 }
 
 /* Notes */
@@ -56,7 +56,7 @@ export const DEFAULT_SHOP_ID = "__default_shop__";
 const MAX_RECENT_CATS = 12;
 
 // ===============================================================
-// Storage Port（抽象層）
+// Storage Port (abstraction layer)
 // ===============================================================
 interface StoragePort {
   getItem(key: string): string | null;
@@ -79,8 +79,44 @@ class LocalStoragePort implements StoragePort {
   }
 }
 
-// 目前用 localStorage，未來要換 IndexedDB / 後端，只要換這裡
+// Currently using localStorage. Swap this port if migrating to IndexedDB/backend.
 const storage: StoragePort = new LocalStoragePort();
+
+// ===============================================================
+// Tiny Event Emitter (same-tab live UI notifications)
+// ===============================================================
+type StageCfgChangedPayload = { shopId: string; productId: string; cfg: StageConfig[] };
+type StepOrderChangedPayload = { shopId: string; productId: string; stageId: string; order: string[] };
+
+type BusMap = {
+  "stagecfg:changed": StageCfgChangedPayload;
+  "steporder:changed": StepOrderChangedPayload;
+};
+type BusHandler<K extends keyof BusMap> = (p: BusMap[K]) => void;
+
+const Emitter = (() => {
+  const map = new Map<string, Set<Function>>();
+  return {
+    on<K extends keyof BusMap>(type: K, fn: BusHandler<K>) {
+      if (!map.has(type)) map.set(type, new Set());
+      map.get(type)!.add(fn);
+      return () => map.get(type)?.delete(fn);
+    },
+    emit<K extends keyof BusMap>(type: K, payload: BusMap[K]) {
+      const set = map.get(type);
+      if (!set) return;
+      for (const fn of set) (fn as any)(payload);
+    },
+  };
+})();
+
+// Optional subscription APIs
+export function onStageConfigChanged(fn: BusHandler<"stagecfg:changed">) {
+  return Emitter.on("stagecfg:changed", fn);
+}
+export function onStepOrderChanged(fn: BusHandler<"steporder:changed">) {
+  return Emitter.on("steporder:changed", fn);
+}
 
 // ===============================================================
 // Utils
@@ -101,14 +137,14 @@ const uniq = <T,>(arr: T[]) => Array.from(new Set(arr));
 const isBlank = (s?: string | null) => !s || String(s).trim() === "";
 const hasValue = (s?: string | null) => !isBlank(s);
 
-// shopId：參數 > 目前選擇 > 預設
+// shopId resolution: param > current selection > default
 function ensureShopId(input?: string): string {
   const sid = input ?? AuthStore.getCurrentShopId() ?? DEFAULT_SHOP_ID;
   return sid;
 }
 export const getCurrentShopIdSafe = () => ensureShopId();
 
-// 產 uid（URL-safe）
+// URL-safe uid
 function uid(prefix = ""): string {
   const b = crypto.getRandomValues(new Uint8Array(16));
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -117,14 +153,14 @@ function uid(prefix = ""): string {
   return prefix ? `${prefix}_${id}` : id;
 }
 
-// 允許 number|string，最後統一成字串 pid
+// Accept number|string and normalize to string
 function normalizePid(pid: number | string): string {
   if (typeof pid === "number") return String(pid);
   return String(pid || "").trim();
 }
 
 // ===============================================================
-// Key Helpers（命名空間）
+// Key Helpers (namespacing)
 // ===============================================================
 const Key = {
   products: (shopId: string) => `shop_${shopId}_products`,
@@ -138,7 +174,7 @@ const Key = {
 };
 
 // ===============================================================
-// 封裝區（Stores / Services）
+// Stores / Services
 // ===============================================================
 
 // -------- AuthStore -----------------------------------------------------------
@@ -170,6 +206,7 @@ const AuthStore = {
     storage.removeItem(CURR_SHOP_KEY);
   },
 
+  // Move legacy keys to the new ones and fix role=None if meta has a role
   migrateLegacyAuthKeys() {
     try {
       const legacy = storage.getItem(LEGACY_CURR_ACC_KEY);
@@ -178,7 +215,6 @@ const AuthStore = {
       }
       if (legacy) storage.removeItem(LEGACY_CURR_ACC_KEY);
 
-      // 修正 None 角色
       const acc = AuthStore.getAccount();
       const meta = acc ? AccountStore.getAccountsMeta()[acc] : undefined;
       const currentRole = AuthStore.getRole();
@@ -258,10 +294,10 @@ const ShopStore = {
     const shop  = shops[shopId];
     if (!shop) return;
 
-    // 清掉此 shop 的所有資料
+    // Remove all data under this shop
     CleanupService.clearShopAllData(shopId);
 
-    // 從 owner 的 meta 移除
+    // Remove shop from owner meta and adjust currentShopId if needed
     const metas = AccountStore.getAccountsMeta();
     const ownerMeta = metas[shop.owner];
     if (ownerMeta) {
@@ -336,7 +372,7 @@ const ProductStore = {
     };
     ProductStore.save([...products, newProd], sid);
 
-    // 連同紀錄一起複製
+    // Clone records together with the product
     const nowMs  = Date.now();
     const nowSec = Math.floor(nowMs / 1000);
     const srcRecords = RecordStore.load(srcId, sid) || [];
@@ -363,6 +399,7 @@ const ProductStore = {
     ProductStore.save(list, sid);
   },
 
+  // Accept id/serial/legacy numeric id and resolve to product id
   findIdByAnyIdent(shopId: string, ident: string | number): string | null {
     const sid = ensureShopId(shopId);
     const products = ProductStore.load(sid);
@@ -508,6 +545,61 @@ const RecordStore = {
 
     RecordStore.save(pidStr, next, sid);
     return next;
+  },
+};
+
+// -------- StepOrderStore ------------------------------------------------------
+const StepOrderStore = {
+  load(shopId: string, productId: string | number, stageId: string): string[] | null {
+    const sid = ensureShopId(shopId);
+    const pid = normalizePid(productId);
+    if (isBlank(pid) || isBlank(stageId)) return null;
+    const key = Key.stepOrder(sid, pid, stageId);
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) return null;
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? (arr as string[]) : null;
+    } catch { return null; }
+  },
+
+  save(shopId: string, productId: string | number, stageId: string, orderedStepIds: string[]) {
+    const sid = ensureShopId(shopId);
+    const pid = normalizePid(productId);
+    if (isBlank(pid) || isBlank(stageId)) return;
+    const key = Key.stepOrder(sid, pid, stageId);
+    storage.setItem(key, JSON.stringify(orderedStepIds || []));
+    // broadcast
+    Emitter.emit("steporder:changed", { shopId: sid, productId: pid, stageId, order: orderedStepIds || [] });
+  },
+
+  // Ensure persisted order is aligned with incoming steps (append new, drop missing)
+  ensureFromSteps(shopId: string, productId: string | number, stageId: string, steps: { id: string }[]): string[] {
+    const sid = ensureShopId(shopId);
+    const pid = normalizePid(productId);
+    const cur = StepOrderStore.load(sid, pid, stageId);
+    const incomingIds = steps.map(s => s.id);
+    if (cur && cur.length) {
+      const incomingSet = new Set(incomingIds);
+      const filtered = cur.filter(id => incomingSet.has(id));
+      const missing  = incomingIds.filter(id => !filtered.includes(id));
+      const merged   = [...filtered, ...missing];
+      if (JSON.stringify(merged) !== JSON.stringify(cur)) {
+        StepOrderStore.save(sid, pid, stageId, merged);
+      }
+      return merged;
+    }
+    StepOrderStore.save(sid, pid, stageId, incomingIds);
+    return incomingIds;
+  },
+
+  removeAllForProduct(shopId: string, productId: string | number) {
+    const sid = ensureShopId(shopId);
+    const pid = normalizePid(productId);
+    const prefix = `step_order:${sid}:${pid}:`;
+    storage.keys()
+      .filter(k => k.startsWith(prefix))
+      .forEach(k => storage.removeItem(k));
   },
 };
 
@@ -660,12 +752,21 @@ const NoteStore = {
 function cloneTemplate(): StageConfig[] {
   return JSON.parse(JSON.stringify(FIXED_STAGE_TEMPLATES));
 }
+function deepClone<T>(v: T): T { return JSON.parse(JSON.stringify(v)); }
+
+// Utility: support both step.label / step.name fields
+function setStepLabel(step: any, newLabel: string) {
+  if ("label" in step) step.label = newLabel;
+  else if ("name" in step) step.name = newLabel;
+  else step.label = newLabel;
+}
+
 const StageConfigStore = {
   load(shopId?: string, productId?: string): StageConfig[] {
     const sid = ensureShopId(shopId);
     const pid = String(productId ?? "").trim();
 
-    // 清掉歷史殘留的空 pid key
+    // Remove legacy empty-pid key
     const emptyKey = Key.stageCfg(sid, "");
     if (storage.getItem(emptyKey)) storage.removeItem(emptyKey);
 
@@ -677,18 +778,30 @@ const StageConfigStore = {
       if (!raw) {
         const tpl = cloneTemplate();
         storage.setItem(key, JSON.stringify(tpl));
+        // First-time: sync step orders
+        tpl.forEach(s => StepOrderStore.ensureFromSteps(sid, pid, (s as any).id, (s as any).steps || []));
+        // Broadcast
+        Emitter.emit("stagecfg:changed", { shopId: sid, productId: pid, cfg: deepClone(tpl) });
         return tpl;
       }
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed) || parsed.length === 0) {
         const tpl = cloneTemplate();
         storage.setItem(key, JSON.stringify(tpl));
+        tpl.forEach(s => StepOrderStore.ensureFromSteps(sid, pid, (s as any).id, (s as any).steps || []));
+        Emitter.emit("stagecfg:changed", { shopId: sid, productId: pid, cfg: deepClone(tpl) });
         return tpl;
       }
+      // On read: repair order if steps changed
+      (parsed as any[]).forEach(s =>
+        StepOrderStore.ensureFromSteps(sid, pid, s.id, (s.steps ?? []))
+      );
       return parsed as StageConfig[];
     } catch {
       const tpl = cloneTemplate();
       storage.setItem(key, JSON.stringify(tpl));
+      tpl.forEach(s => StepOrderStore.ensureFromSteps(sid, pid, (s as any).id, (s as any).steps || []));
+      Emitter.emit("stagecfg:changed", { shopId: sid, productId: pid, cfg: deepClone(tpl) });
       return tpl;
     }
   },
@@ -700,6 +813,13 @@ const StageConfigStore = {
     const key = Key.stageCfg(sid, pid);
     const data = Array.isArray(cfg) && cfg.length > 0 ? cfg : cloneTemplate();
     storage.setItem(key, JSON.stringify(data));
+    // Keep step_order in sync for each stage
+    (data as any[]).forEach(s => {
+      const steps = (s.steps ?? []) as { id: string }[];
+      StepOrderStore.ensureFromSteps(sid, pid, s.id, steps);
+    });
+    // Broadcast
+    Emitter.emit("stagecfg:changed", { shopId: sid, productId: pid, cfg: deepClone(data) });
   },
 
   reset(shopId?: string, productId?: string): StageConfig[] {
@@ -709,6 +829,8 @@ const StageConfigStore = {
     const key = Key.stageCfg(sid, pid);
     const tpl = cloneTemplate();
     storage.setItem(key, JSON.stringify(tpl));
+    tpl.forEach(s => StepOrderStore.ensureFromSteps(sid, pid, (s as any).id, (s as any).steps || []));
+    Emitter.emit("stagecfg:changed", { shopId: sid, productId: pid, cfg: deepClone(tpl) });
     return tpl;
   },
 
@@ -727,58 +849,6 @@ const StageConfigStore = {
 
     const legacyKey2 = `stage_config::__default_shop__:${pid}`;
     if (storage.getItem(legacyKey2)) storage.removeItem(legacyKey2);
-  },
-};
-
-// -------- StepOrderStore ------------------------------------------------------
-const StepOrderStore = {
-  load(shopId: string, productId: string | number, stageId: string): string[] | null {
-    const sid = ensureShopId(shopId);
-    const pid = normalizePid(productId);
-    if (isBlank(pid) || isBlank(stageId)) return null;
-    const key = Key.stepOrder(sid, pid, stageId);
-    try {
-      const raw = storage.getItem(key);
-      if (!raw) return null;
-      const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? (arr as string[]) : null;
-    } catch { return null; }
-  },
-
-  save(shopId: string, productId: string | number, stageId: string, orderedStepIds: string[]) {
-    const sid = ensureShopId(shopId);
-    const pid = normalizePid(productId);
-    if (isBlank(pid) || isBlank(stageId)) return;
-    const key = Key.stepOrder(sid, pid, stageId);
-    storage.setItem(key, JSON.stringify(orderedStepIds || []));
-  },
-
-  ensureFromSteps(shopId: string, productId: string | number, stageId: string, steps: { id: string }[]): string[] {
-    const sid = ensureShopId(shopId);
-    const pid = normalizePid(productId);
-    const cur = StepOrderStore.load(sid, pid, stageId);
-    const incomingIds = steps.map(s => s.id);
-    if (cur && cur.length) {
-      const incomingSet = new Set(incomingIds);
-      const filtered = cur.filter(id => incomingSet.has(id));
-      const missing  = incomingIds.filter(id => !filtered.includes(id));
-      const merged   = [...filtered, ...missing];
-      if (JSON.stringify(merged) !== JSON.stringify(cur)) {
-        StepOrderStore.save(sid, pid, stageId, merged);
-      }
-      return merged;
-    }
-    StepOrderStore.save(sid, pid, stageId, incomingIds);
-    return incomingIds;
-  },
-
-  removeAllForProduct(shopId: string, productId: string | number) {
-    const sid = ensureShopId(shopId);
-    const pid = normalizePid(productId);
-    const prefix = `step_order:${sid}:${pid}:`;
-    storage.keys()
-      .filter(k => k.startsWith(prefix))
-      .forEach(k => storage.removeItem(k));
   },
 };
 
@@ -802,7 +872,7 @@ const CleanupService = {
     storage.removeItem(Key.categories(sid));
     storage.removeItem(Key.recentCats(sid));
 
-    // 清理殘留的孤兒資料
+    // Sweep leftovers
     CleanupService.sweepOrphanDataForShop(sid);
   },
 
@@ -878,6 +948,7 @@ const CleanupService = {
     ids.forEach(sid => CleanupService.sweepOrphanDataForShop(sid));
   },
 
+  // Clear app data while keeping migration flags
   clearAllAppDataButKeepMigrations() {
     const APP_KEY_PREFIXES = [
       "shop__", "shop_", "stage_config:", "step_order:", "target:",
@@ -889,7 +960,7 @@ const CleanupService = {
     RemoveByPattern(/^shop_.*_batches$/);
 
     [ "CFP_auth_token", CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY, SHOPS_KEY ].forEach(k => storage.removeItem(k));
-    // 如要連 accounts_meta 一起砍，解開下行：
+    // If you'd like to also wipe accounts_meta, uncomment:
     // storage.removeItem(ACCOUNTS_KEY);
   },
 
@@ -1083,7 +1154,7 @@ const BrowseService = {
 };
 
 // ===============================================================
-// 對外 API（保留你原本的函式名稱，改為委派到 Store/Service）
+// Public API
 // ===============================================================
 
 // Auth / Role
@@ -1157,6 +1228,61 @@ export const saveStepOrder     = (shopId: string, productId: string | number, st
 export const ensureStepOrderFromSteps = (shopId: string, productId: string | number, stageId: string, steps: { id: string }[]) =>
   StepOrderStore.ensureFromSteps(shopId, productId, stageId, steps);
 
+// Step edit APIs — return updated cfg; keep step_order in sync and broadcast
+export function renameStep(shopId: string, productId: string | number, stageId: string, stepId: string, newLabel: string): StageConfig[] {
+  const sid = ensureShopId(shopId);
+  const pid = normalizePid(productId);
+  const cfg = StageConfigStore.load(sid, pid) as any[];
+  const sIdx = cfg.findIndex(s => s.id === stageId);
+  if (sIdx < 0) return cfg;
+  const steps = (cfg[sIdx].steps ?? []) as any[];
+  const stIdx = steps.findIndex(st => st.id === stepId);
+  if (stIdx < 0) return cfg;
+
+  const trimmed = (newLabel ?? "").trim();
+  setStepLabel(steps[stIdx], trimmed || "未命名步驟");
+
+  const nextCfg = [...cfg];
+  nextCfg[sIdx] = { ...cfg[sIdx], steps: [...steps] };
+  StageConfigStore.save(sid, pid, nextCfg); // will sync step_order + broadcast
+  return deepClone(nextCfg);
+}
+
+export function deleteStep(shopId: string, productId: string | number, stageId: string, stepId: string): StageConfig[] {
+  const sid = ensureShopId(shopId);
+  const pid = normalizePid(productId);
+  const cfg = StageConfigStore.load(sid, pid) as any[];
+  const sIdx = cfg.findIndex(s => s.id === stageId);
+  if (sIdx < 0) return cfg;
+
+  const steps = (cfg[sIdx].steps ?? []) as any[];
+  const nextSteps = steps.filter(st => st.id !== stepId);
+  if (nextSteps.length === steps.length) return cfg; // no change
+
+  const nextCfg = [...cfg];
+  nextCfg[sIdx] = { ...cfg[sIdx], steps: nextSteps };
+  StageConfigStore.save(sid, pid, nextCfg); // will drop deleted id from order + broadcast
+  return deepClone(nextCfg);
+}
+
+export function addStep(shopId: string, productId: string | number, stageId: string, label: string, tag?: any): StageConfig[] {
+  const sid = ensureShopId(shopId);
+  const pid = normalizePid(productId);
+  const cfg = StageConfigStore.load(sid, pid) as any[];
+  const sIdx = cfg.findIndex(s => s.id === stageId);
+  if (sIdx < 0) return cfg;
+
+  const steps = (cfg[sIdx].steps ?? []) as any[];
+  const newStepId = uid("step");
+  const newStep: any = { id: newStepId, label: (label ?? "").trim() || "未命名步驟" };
+  if (tag !== undefined) newStep.tag = tag;
+
+  const nextCfg = [...cfg];
+  nextCfg[sIdx] = { ...cfg[sIdx], steps: [...steps, newStep] };
+  StageConfigStore.save(sid, pid, nextCfg); // will append to order + broadcast
+  return deepClone(nextCfg);
+}
+
 // Migration & Cleanup / Dev helpers
 export const migrateLegacyAuthKeys = () => AuthStore.migrateLegacyAuthKeys();
 export const migrateLegacyData     = () => MigrationService.migrateLegacyData();
@@ -1185,7 +1311,7 @@ export function logout() {
   storage.removeItem(LEGACY_CURR_ACC_KEY);
 }
 
-// 新增：帳號/店鋪清除與硬重置工具（相容原API）
+// Account/shop cleanup & hard reset utilities (backward compatible)
 export function clearAllAppDataButKeepMigrations() { CleanupService.clearAllAppDataButKeepMigrations(); }
 export function clearShopsData(shopIds: string[]) { CleanupService.clearShopsData(shopIds); }
 export function deleteAccountCompletely(accountId: string) {
@@ -1235,17 +1361,17 @@ export function deleteAccount(accountId: string) {
   return deleteAccountCompletely(accountId);
 }
 
-// 放在 CleanupService 旁邊或裡面都可以
+// Utility near CleanupService: enumerate existing shop ids (incl. inferred)
 function getAllExistingShopIds(): Set<string> {
   const ids = new Set<string>();
-  // 來自 shops_map
+  // From shops_map
   Object.keys(getShopsMap() || {}).forEach(id => ids.add(id));
-  // 從 localStorage 命名空間推斷
-  for (const k of Object.keys(localStorage)) {
+  // Infer from storage key namespaces
+  for (const k of storage.keys()) {
     const m = k.match(/^shop_(.+?)_(products|categories|records_.+)$/);
     if (m) ids.add(m[1]);
   }
-  // 也納入 DEFAULT_SHOP_ID（若你想保留它，可以移除這行）
+  // Include DEFAULT_SHOP_ID if you still keep its namespace
   ids.add(DEFAULT_SHOP_ID);
   return ids;
 }
@@ -1258,7 +1384,7 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i)!;
 
-    // 1) target:<sid>:<pid> → 若 sid 不存在，或該 sid 下找不到該 pid 的產品，就刪
+    // target:<sid>:<pid> → delete if sid doesn't exist, or pid not found in that shop
     if (k.startsWith("target:")) {
       const m = k.match(/^target:([^:]+):(.+)$/);
       if (m) {
@@ -1267,11 +1393,11 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
 
         const isDefault = (sid === "__default_shop__");
         if (isDefault && !includeDefault) {
-          // 保留 default 命名空間（如果不想保留，呼叫時傳 includeDefault:true）
+          // keep default namespace (set includeDefault:true to purge as well)
         } else if (!existingShopIds.has(sid)) {
           toDel.push(k);
         } else {
-          // sid 存在 → 檢查該 shop 的 products 是否包含此 pid
+          // sid exists → check if pid belongs to products of this shop
           const prods = loadJSON<Product[]>(`shop_${sid}_products`, []);
           const found = prods.some(p => String(p.id) === String(pid));
           if (!found) toDel.push(k);
@@ -1279,9 +1405,8 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
       }
     }
 
-    // 2) 老怪鍵：shop___default_shop___batches / shop__default_shop__batches
+    // legacy weird keys to purge by default
     if (/^shop___default_shop___batches$/.test(k) || /^shop__default_shop__batches$/.test(k)) {
-      // 預設直接砍；若真的要保留，自己拿掉這段
       toDel.push(k);
     }
   }
@@ -1290,4 +1415,18 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
   if (toDel.length) {
     console.info("[purgeStrayTargetsAndLegacyBatches] removed:", toDel.length, toDel);
   }
+}
+
+/**
+ * Convert StageConfig[] into a minimal step order payload for backend.
+ * Use when sending only stageId and step id order list.
+ */
+export function getStepOrderPayload(stages: {
+  id: string;
+  steps: { id: string }[];
+}[]) {
+  return stages.map((s) => ({
+    stageId: s.id,
+    order: s.steps.map((step) => step.id),
+  }));
 }

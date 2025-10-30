@@ -1,5 +1,13 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import {
+  // account / role / shop 狀態
   getAccount as loadAccount,
   clearAccount as clearCurrentAccount,
   setRoleOf,
@@ -7,30 +15,38 @@ import {
   softLogout,
   setAccount as saveCurrentAccount,
   setRole as saveRole,
+  getCurrentShopId as loadCurrentShopId,
+  setCurrentShopId as saveCurrentShopId,
+
+  // 資料面工具
   deleteAccountCompletely,
   clearShopsData,
   hardAppReset,
   getAccountsMeta,
   getShopsMap,
   saveShopsMap,
-} from "../utils/storage";
+} from "@/utils/storage";
+
 import { auth } from "@/api";
 
 const TOKEN_KEY = "CFP_auth_token";
 
-interface UserCtx {
+type UserCtx = {
   ready: boolean;
   account: string | null;
   role: Role;
   token: string | null;
+  currentShopId: string | null;
 
+  // 動作
   login: (account: string, password: string) => Promise<void>;
   signup: (opts: { account: string; password: string; role: Role; shopName?: string }) => Promise<void>;
   logout: (fullWipe?: boolean) => Promise<void>;
   chooseRole: (r: Role) => void;
+  chooseShop: (shopId: string | null) => void;
   refresh: () => Promise<void>;
   removeMyAccount: () => Promise<void>;
-}
+};
 
 const Ctx = createContext<UserCtx | null>(null);
 export const useUser = () => {
@@ -65,11 +81,13 @@ function wipeLocalDataForAccount(account: string | null) {
   if (guessedShopIds.length) {
     clearShopsData(guessedShopIds);
     const map = getShopsMap();
-    guessedShopIds.forEach(id => delete map[id]);
+    guessedShopIds.forEach((id) => delete map[id]);
     saveShopsMap(map);
   }
 
-  ["CFP_auth_token", "account", "role", "currentShopId"].forEach(k => localStorage.removeItem(k));
+  ["CFP_auth_token", "account", "role", "currentShopId"].forEach((k) =>
+    localStorage.removeItem(k)
+  );
 }
 
 /** 從 accounts_meta 推得角色（後端回不來時使用） */
@@ -79,100 +97,159 @@ function inferRoleFromLocal(account: string | null): Role {
   return (meta?.role as Role) || "None";
 }
 
-export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [ready, setReady]   = useState(false);
-  const [account, setAcc]   = useState<string | null>(loadAccount() || null);
-  const [role, setRole]     = useState<Role>("None");
-  const [token, setToken]   = useState<string | null>(localStorage.getItem(TOKEN_KEY));
+/** 從 accounts_meta 推得 shopId（登入/註冊後，若後端沒給 shopId 時使用） */
+function inferShopFromLocal(account: string | null): string | null {
+  if (!account) return null;
+  const meta = getAccountsMeta()[account];
+  return meta?.currentShopId ?? meta?.shopIds?.[0] ?? null;
+}
 
-  /** 重新讀取目前登入者；盡量從後端拿，失敗時回退本機 */
-  const refresh = async () => {
+export function UserProvider({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+  const [account, setAcc] = useState<string | null>(loadAccount() || null);
+  const [role, setRole] = useState<Role>("None");
+  const [token, setToken] = useState<string | null>(localStorage.getItem(TOKEN_KEY));
+  const [currentShopId, setShopId] = useState<string | null>(loadCurrentShopId() ?? null);
+
+  /** 把 localStorage → state（初始化 / 手動刷新） */
+  const refresh = useCallback(async () => {
     try {
-      const me = await auth.getMe();
+      const me = await auth.getMe(); // 後端若可取得：{ username, type, currentShopId? ... }
       saveCurrentAccount(me.username);
-      saveRole(me.type as Role);
+      if (me.type) saveRole(me.type as Role);
+      if (me.currentShopId) saveCurrentShopId(me.currentShopId);
+
       setAcc(me.username);
-      setRole(me.type as Role);
+      setRole((me.type as Role) || inferRoleFromLocal(me.username));
+      setShopId(me.currentShopId ?? loadCurrentShopId() ?? inferShopFromLocal(me.username));
       setToken(localStorage.getItem(TOKEN_KEY));
     } catch {
       const acc = loadAccount() || null;
-      const fallbackRole = inferRoleFromLocal(acc);
       setAcc(acc);
-      setRole(fallbackRole);
+      setRole(inferRoleFromLocal(acc));
+      setShopId(loadCurrentShopId() ?? inferShopFromLocal(acc));
       setToken(localStorage.getItem(TOKEN_KEY));
     }
-  };
+  }, []);
 
+  // 初始化：判斷一次登入狀態
   useEffect(() => {
     (async () => {
       await refresh();
-      setReady(true); // ready=已判斷完登入狀態
+      setReady(true);
     })();
+  }, [refresh]);
+
+  // 跨分頁/同頁其他程式變更 localStorage 時，與 Context 同步
+  useEffect(() => {
+    const onStorage = () => {
+      setAcc(loadAccount() || null);
+      setRole(inferRoleFromLocal(loadAccount() || null));
+      setShopId(loadCurrentShopId() ?? inferShopFromLocal(loadAccount() || null));
+      setToken(localStorage.getItem(TOKEN_KEY));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  /** 登入後一定補齊角色（先 getMe，失敗用 accounts_meta） */
-  const login = async (accountInput: string, password: string) => {
-    const res = await auth.login(accountInput, password);
+  /** 登入：同步 token / account / role / shopId 到 localStorage + Context */
+  const login = useCallback(async (accountInput: string, password: string) => {
+    const res = await auth.login(accountInput, password); // 期望回 { username, token, ... }
     localStorage.setItem(TOKEN_KEY, res.token);
     saveCurrentAccount(res.username);
 
-    // 盡量從後端取得角色
+    // 後端優先，其次本機
     let finalRole: Role = "None";
+    let finalShop: string | null = null;
+
     try {
       const me = await auth.getMe();
-      finalRole = (me.type as Role) || "None";
+      finalRole = (me.type as Role) || inferRoleFromLocal(res.username);
+      finalShop = me.currentShopId ?? inferShopFromLocal(res.username);
+      if (me.currentShopId) saveCurrentShopId(me.currentShopId);
     } catch {
-      // 後端沒有 type，就從本機 accounts_meta 補
       finalRole = inferRoleFromLocal(res.username);
+      finalShop = inferShopFromLocal(res.username);
     }
 
     saveRole(finalRole);
+    if (finalShop) saveCurrentShopId(finalShop);
+
     setAcc(res.username);
     setRole(finalRole);
+    setShopId(finalShop ?? null);
     setToken(res.token);
-  };
+  }, []);
 
-  /** 註冊後也補齊角色（同上） */
-  const signup = async (opts: { account: string; password: string; role: Role; shopName?: string }) => {
-    const res = await auth.signup(opts);
-    localStorage.setItem(TOKEN_KEY, res.token);
-    saveCurrentAccount(res.username);
+  /** 註冊：同理，註冊成功後也視為登入（若你不想自動登入，可把 setXXX 這段抽成可選） */
+  const signup = useCallback(
+    async (opts: { account: string; password: string; role: Role; shopName?: string }) => {
+      const res = await auth.signup(opts); // 期望回 { username, token, ... }
+      localStorage.setItem(TOKEN_KEY, res.token);
+      saveCurrentAccount(res.username);
 
-    let finalRole: Role = "None";
+      let finalRole: Role = "None";
+      let finalShop: string | null = null;
+
+      try {
+        const me = await auth.getMe();
+        finalRole = (me.type as Role) || opts.role || inferRoleFromLocal(res.username);
+        finalShop = me.currentShopId ?? inferShopFromLocal(res.username);
+        if (me.currentShopId) saveCurrentShopId(me.currentShopId);
+      } catch {
+        finalRole = opts.role || inferRoleFromLocal(res.username);
+        finalShop = inferShopFromLocal(res.username);
+      }
+
+      saveRole(finalRole);
+      if (finalShop) saveCurrentShopId(finalShop);
+
+      setAcc(res.username);
+      setRole(finalRole);
+      setShopId(finalShop ?? null);
+      setToken(res.token);
+    },
+    []
+  );
+
+  /** 登出：清 localStorage + Context（讓 HomeGate 立刻看到未登入） */
+  const logout = useCallback(async (fullWipe?: boolean) => {
     try {
-      const me = await auth.getMe();
-      finalRole = (me.type as Role) || opts.role || "None";
+      await auth.logout();
     } catch {
-      finalRole = opts.role || inferRoleFromLocal(res.username);
+      /* ignore */
     }
-
-    saveRole(finalRole);
-    setAcc(res.username);
-    setRole(finalRole);
-    setToken(res.token);
-  };
-
-  const logout = async (fullWipe?: boolean) => {
-    try { await auth.logout(); } catch {}
     localStorage.removeItem(TOKEN_KEY);
-    softLogout();
+    softLogout();        // 清 account/role/currentShopId 等
     clearCurrentAccount();
+
     if (fullWipe) {
-      hardAppReset();
+      hardAppReset();    // 清更乾淨（僅保留遷移旗標）；或你可用 hardAppNuke()
     }
+
     setAcc(null);
     setRole("None");
+    setShopId(null);
     setToken(null);
-  };
+  }, []);
 
-  const chooseRole = (r: Role) => {
+  /** 切換角色（本地 Demo 用；正式版應由後端權限決定） */
+  const chooseRole = useCallback((r: Role) => {
     if (!account) return;
     setRoleOf(account, r);
     saveRole(r);
     setRole(r);
-  };
+  }, [account]);
 
-  const removeMyAccount = async () => {
+  /** 切換店鋪（讓畫面與 Router 都能即時反應） */
+  const chooseShop = useCallback((shopId: string | null) => {
+    if (shopId) saveCurrentShopId(shopId);
+    else localStorage.removeItem("currentShopId");
+    setShopId(shopId);
+  }, []);
+
+  /** 刪除自己的帳號（本地資料也清掉） */
+  const removeMyAccount = useCallback(async () => {
     const me = account;
     if (!me) return;
     try {
@@ -188,13 +265,27 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     wipeLocalDataForAccount(me);
     setAcc(null);
     setRole("None");
+    setShopId(null);
     setToken(null);
-  };
+  }, [account]);
 
-  const value = useMemo<UserCtx>(() => ({
-    ready, account, role, token,
-    login, signup, logout, chooseRole, refresh, removeMyAccount
-  }), [ready, account, role, token]);
+  const value = useMemo<UserCtx>(
+    () => ({
+      ready,
+      account,
+      role,
+      token,
+      currentShopId,
+      login,
+      signup,
+      logout,
+      chooseRole,
+      chooseShop,
+      refresh,
+      removeMyAccount,
+    }),
+    [ready, account, role, token, currentShopId, login, signup, logout, chooseRole, chooseShop, refresh, removeMyAccount]
+  );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -137,7 +137,7 @@ type AnalysisRange = "all" | "7d" | "30d" | "365d";
 
 /* ========== 主頁面 ========== */
 export default function ProductLifeCyclePage() {
-  const isMobile = useIsMobile(720);
+  useIsMobile(720); // 目前未使用，但保留以利之後 RWD 行為
   const { productId } = useParams<{ productId: string }>();
   const [searchParams] = useSearchParams();
   const explicitShopId = searchParams.get("shop");
@@ -286,18 +286,18 @@ export default function ProductLifeCyclePage() {
         s.id !== stageId
           ? s
           : {
-            ...s,
-            steps: [
-              ...s.steps,
-              {
-                id:
-                  (crypto as any).randomUUID?.() ??
-                  `${Date.now()}-${Math.random()}`,
-                label,
-                tag,
-              },
-            ],
-          }
+              ...s,
+              steps: [
+                ...s.steps,
+                {
+                  id:
+                    (crypto as any).randomUUID?.() ??
+                    `${Date.now()}-${Math.random()}`,
+                  label,
+                  tag,
+                },
+              ],
+            }
       );
       saveStageConfig(workingShopId, productId!, next);
       return next;
@@ -422,8 +422,8 @@ export default function ProductLifeCyclePage() {
         if (r.id !== id) return r;
         const newAmount =
           typeof patch.amount === "number" &&
-            !Number.isNaN(patch.amount) &&
-            patch.amount > 0
+          !Number.isNaN(patch.amount) &&
+          patch.amount > 0
             ? patch.amount
             : r.amount;
         const newMaterial =
@@ -490,7 +490,7 @@ export default function ProductLifeCyclePage() {
     [analysisRecords]
   );
 
-  // 依係數 Top10（保留你原本的）
+  // 依係數 Top10
   const byMaterial = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of analysisRecords) {
@@ -510,7 +510,7 @@ export default function ProductLifeCyclePage() {
       ? totalEmission / target.packCount
       : undefined;
 
-  /* === 新增：準備 Stage/Step 彙總 === */
+  /* === 準備 Stage/Step 彙總 === */
   const recordsForAgg: EmissionRecord[] = useMemo(() => {
     return analysisRecords.map((r) => ({
       id: r.id,
@@ -548,11 +548,11 @@ export default function ProductLifeCyclePage() {
       t.unit === "kg"
         ? !!(t.totalKg && t.totalKg > 0)
         : !!(
-          t.packCount &&
-          t.packCount > 0 &&
-          t.gramsPerPack &&
-          t.gramsPerPack > 0
-        );
+            t.packCount &&
+            t.packCount > 0 &&
+            t.gramsPerPack &&
+            t.gramsPerPack > 0
+          );
     if (!ok) {
       alert("請完整填寫標的資料");
       return;
@@ -561,6 +561,15 @@ export default function ProductLifeCyclePage() {
     setTarget(t);
     setTargetModalOpen(false);
   };
+
+  // === productId 防呆 ===
+  if (!productId) {
+    return (
+      <Shell>
+        <NoteCard>無效的商品，缺少 productId。</NoteCard>
+      </Shell>
+    );
+  }
 
   return (
     <Shell>
@@ -632,7 +641,7 @@ export default function ProductLifeCyclePage() {
 
       {/* ===== 內容 ===== */}
       {activeTab === "lifecycle" && (
-        <Stack gap={12}>
+        <Stack $gap={12}>
           {stages.every((s) => s.steps.length === 0) && (
             <NoteCard>
               尚未建立任何步驟，請在各階段按「＋新增步驟」建立（需選既有標籤）。
@@ -642,6 +651,7 @@ export default function ProductLifeCyclePage() {
             <Card key={stage.id}>
               <StageBlock
                 stage={stage}
+                productId={productId} // ← 必傳！用路由的 productId
                 readOnly={readOnly}
                 onStepClick={handleStepClick}
                 onAddStep={addUserStep}
@@ -653,8 +663,8 @@ export default function ProductLifeCyclePage() {
       )}
 
       {activeTab === "history" && (
-        <Stack gap={12}>
-          <Row right>
+        <Stack $gap={12}>
+          <Row $right>
             <OutlineBtn onClick={handleExport}>匯出報表</OutlineBtn>
           </Row>
           <Card>
@@ -668,9 +678,9 @@ export default function ProductLifeCyclePage() {
       )}
 
       {activeTab === "analysis" && (
-        <Stack gap={12}>
+        <Stack $gap={12}>
           {/* 區間與目標摘要（輕量） */}
-          <Row wrap gap={8} align="center">
+          <Row $wrap $gap={8} $align="center">
             <Muted>
               {target ? (
                 target.unit === "kg" ? (
@@ -696,10 +706,10 @@ export default function ProductLifeCyclePage() {
                   {opt === "all"
                     ? "全部"
                     : opt === "7d"
-                      ? "近7天"
-                      : opt === "30d"
-                        ? "近30天"
-                        : "近一年"}
+                    ? "近7天"
+                    : opt === "30d"
+                    ? "近30天"
+                    : "近一年"}
                 </SegSmall>
               ))}
             </Segment>
@@ -796,7 +806,9 @@ export default function ProductLifeCyclePage() {
                   標的摘要：
                   {target.unit === "kg"
                     ? `總重 ${target.totalKg} kg`
-                    : `${target.packCount} 包 × ${target.gramsPerPack} g（總重 ${(outputMassKg(target) ?? 0).toFixed(2)} kg）`}
+                    : `${target.packCount} 包 × ${
+                        target.gramsPerPack
+                      } g（總重 ${(outputMassKg(target) ?? 0).toFixed(2)} kg）`}
                 </Info>
               ) : (
                 <Warn>尚未設定標的，建議先設定以便產出每 kg/每包數值。</Warn>
@@ -833,7 +845,7 @@ export default function ProductLifeCyclePage() {
                 sx={{ marginBottom: "10px" }}
               />
 
-              <Row align="center" gap={8}>
+              <Row $align="center" $gap={8}>
                 <Input
                   type="number"
                   inputMode="decimal"
@@ -874,7 +886,7 @@ export default function ProductLifeCyclePage() {
                 )}
               </HistoryBox>
 
-              <Row gap={8} style={{ marginTop: 12 }}>
+              <Row $gap={8} style={{ marginTop: 12 }}>
                 <PrimaryBtn onClick={handleSaveRecord}>確認提交</PrimaryBtn>
                 <GhostBtn onClick={() => setModalOpen(false)}>取消</GhostBtn>
               </Row>
@@ -894,7 +906,7 @@ export default function ProductLifeCyclePage() {
             <ModalBody style={{ maxWidth: 480 }}>
               <h3 style={{ marginTop: 0 }}>標的設定</h3>
 
-              <Stack gap={10}>
+              <Stack $gap={10}>
                 <Label>計量方式</Label>
                 <Select
                   value={editingTarget.unit}
@@ -974,7 +986,7 @@ export default function ProductLifeCyclePage() {
                 </Info>
               </Stack>
 
-              <Row gap={8} style={{ marginTop: 14 }}>
+              <Row $gap={8} style={{ marginTop: 14 }}>
                 <PrimaryBtn onClick={persistTarget}>儲存</PrimaryBtn>
                 <GhostBtn onClick={() => setTargetModalOpen(false)}>
                   取消
@@ -1110,21 +1122,21 @@ const NoteCard = styled(Card)`
   color: #614700;
 `;
 
-const Stack = styled.div<{ gap?: number }>`
+const Stack = styled.div<{ $gap?: number }>`
   display: grid;
-  gap: ${({ gap }) => gap ?? 10}px;
+  gap: ${({ $gap }) => $gap ?? 10}px;
 `;
 const Row = styled.div<{
-  right?: boolean;
-  wrap?: boolean;
-  gap?: number;
-  align?: string;
+  $right?: boolean;
+  $wrap?: boolean;
+  $gap?: number;
+  $align?: string;
 }>`
   display: flex;
-  gap: ${({ gap }) => gap ?? 10}px;
-  ${({ wrap }) => wrap && "flex-wrap: wrap;"}
-  ${({ align }) => align && `align-items: ${align};`}
-  ${({ right }) => right && "justify-content: flex-end;"}
+  gap: ${({ $gap }) => $gap ?? 10}px;
+  ${({ $wrap }) => $wrap && "flex-wrap: wrap;"}
+  ${({ $align }) => $align && `align-items: ${$align};`}
+  ${({ $right }) => $right && "justify-content: flex-end;"}
 `;
 const Fill = styled.div`
   flex: 1;

@@ -1,22 +1,37 @@
 import React from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+
 import WelcomePage from "@/pages/welcome/WelcomePage";
 import ProductListPage from "@/pages/products/ProductListPage";
 import ProductLifeCyclePage from "@/pages/lifecycle/ProductLifeCycle";
 
-// 引入 Context
 import { UserProvider, useUser } from "@/context/UserContext";
 import { ReportProvider } from "@/context/ReportContext";
 
-/** 受保護路由：未登入（role === "None"）就導回首頁 */
-function RequireAuth({ children }: { children: React.ReactElement }) {
-  const { ready, role } = useUser();
+/** 首頁判斷：
+ *  - 已登入（有 account 且 role !== 'None'）→ 進 /products
+ *  - 未登入 → 顯示 WelcomePage
+ */
+function HomeGate() {
+  const { ready, account, role } = useUser();
 
-  // 還在判斷登入狀態時，先給個簡單占位（也可換成全螢幕 Spinner）
   if (!ready) return <div style={{ padding: 16 }}>載入中…</div>;
 
-  if (role === "None") {
-    return <Navigate to="/" replace />;
+  const isLoggedIn = !!account && role !== "None";
+  if (isLoggedIn) return <Navigate to="/products" replace />;
+  return <WelcomePage />;
+}
+
+/** 受保護路由：未登入就導回首頁 */
+function RequireAuth({ children }: { children: React.ReactElement }) {
+  const { ready, account, role } = useUser();
+  const loc = useLocation();
+
+  if (!ready) return <div style={{ padding: 16 }}>載入中…</div>;
+
+  const isLoggedIn = !!account && role !== "None";
+  if (!isLoggedIn) {
+    return <Navigate to="/" replace state={{ from: loc.pathname }} />;
   }
   return children;
 }
@@ -26,10 +41,10 @@ export default function App() {
     <UserProvider>
       <ReportProvider>
         <Routes>
-          {/* 登入 / 註冊 / 首頁 */}
-          <Route path="/" element={<WelcomePage />} />
+          {/* 首頁：根據登入狀態切換 WelcomePage 或導向 /products */}
+          <Route path="/" element={<HomeGate />} />
 
-          {/* 之下皆為需登入頁 */}
+          {/* 登入後可見的頁面 */}
           <Route
             path="/products"
             element={
@@ -46,6 +61,9 @@ export default function App() {
               </RequireAuth>
             }
           />
+
+          {/* 兜底：未知路徑回首頁 */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </ReportProvider>
     </UserProvider>
