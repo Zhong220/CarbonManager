@@ -1,69 +1,128 @@
-from werkzeug.security import generate_password_hash, check_password_hash
+# backend/models/user_model.py
+from datetime import timedelta
+
+from db_connection import get_db
 from flask_jwt_extended import create_access_token, create_refresh_token
-import mysql.connector
-import os
-from contextlib import contextmanager
-from config import Config
+from werkzeug.security import check_password_hash, generate_password_hash
 
-@contextmanager
-def get_db():
-    """Context manager for database connections"""
-    conn = None
-    try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        yield conn
-    except mysql.connector.Error as e:
-        print(f"Error connecting to MySQL: {e}")
-        raise
-    finally:
-        if conn and conn.is_connected():
-            conn.close()
+# Schema columns:
+# id, email_account, email_ci (generated), password_hash, name,
+# user_type ('shop'|'customer'), organization_id, created_at
 
-USER_COLLECTION = 'users'
 
-def create_user(account, password, user_name):
-    hashed_password = generate_password_hash(password)
+def create_user(
+    account: str,
+    password: str,
+    user_name: str,
+    *,
+    user_type: str = "customer",
+    organization_id: int | None = None
+) -> int:
+    email = (account or "").strip()
+    if not email or not password or not user_name:
+        raise ValueError("account, password, and user_name are required")
+
+    hashed = generate_password_hash(password)
+    sql = """
+        INSERT INTO users (email_account, password_hash, name, user_type, organization_id)
+        VALUES (%s, %s, %s, %s, %s)
+        """
     with get_db() as conn:
-        cursor = conn.cursor(dictionary=True)
-        sql = "INSERT INTO users (account, password, user_name) VALUES (%s, %s, %s)"
-        values = (account, hashed_password, user_name)
-        cursor.execute(sql, values)
-        conn.commit()
-        return cursor.lastrowid
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                sql,
+                (email, hashed, user_name, user_type, organization_id),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            cur.close()
 
-def get_user_by_account(account):
+
+def get_user_by_account(account: str) -> dict | None:
+    email = (account or "").strip().lower()
+    if not email:
+        return None
+    sql = """
+        SELECT id, email_account, password_hash, name, user_type, organization_id, created_at
+        FROM users
+        WHERE email_ci = %s
+        """
     with get_db() as conn:
-        cursor = conn.cursor(dictionary=True)
-        sql = "SELECT * FROM users WHERE account = %s"
-        cursor.execute(sql, (account,))
-        return cursor.fetchone()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                sql,
+                (email,),
+            )
+            return cur.fetchone()
+        finally:
+            cur.close()
 
-def verify_password(stored_password, provided_password):
-    return check_password_hash(stored_password, provided_password)
 
-def generate_tokens(user_id, account):
-    """Generate access and refresh tokens for the user"""
-    access_token = create_access_token(
-        identity=user_id,
-        additional_claims={
-            'account': account
-        }
-    )
-    refresh_token = create_refresh_token(
-        identity=user_id,
-        additional_claims={
-            'account': account
-        }
-    )
-    return {
-        'access_token': access_token,
-        'refresh_token': refresh_token
+def verify_password(stored_hash: str, provided_password: str) -> bool:
+    return check_password_hash(stored_hash, provided_password)
+
+
+def generate_tokens(
+    user_id: int, account: str, *, user_type: str, organization_id: int | None
+) -> dict:
+    claims = {
+        "account": account,
+        "user_type": user_type,
+        "organization_id": organization_id,
     }
+    access = create_access_token(
+        identity=str(user_id),
+        additional_claims=claims,
+        expires_delta=timedelta(minutes=60),
+    )
+    refresh = create_refresh_token(
+        identity=str(user_id), additional_claims=claims, expires_delta=timedelta(days=7)
+    )
+    return {"access_token": access, "refresh_token": refresh}
 
-def get_user_by_id(user_id):
-    """Get user by their ID"""
+
+def get_user_by_id(user_id: int) -> dict | None:
+    sql = """
+        SELECT
+            id,
+            email_account,
+            password_hash,
+            name,
+            user_type,
+            organization_id,
+            created_at
+        FROM users
+        WHERE id = %s
+        """
     with get_db() as conn:
-        cursor = conn.cursor(dictionary=True)
-        sql = "SELECT * FROM users WHERE id = %s"
-        cursor.execute(sql, (user_id,))
-        return cursor.fetchone()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                sql,
+                (user_id,),
+            )
+            return cur.fetchone()
+        finally:
+            cur.close()
+
+
+def get_user_organization(user_id: int) -> dict | None:
+    sql = """
+        SELECT o.id, o.name, o.slug, o.created_at
+        FROM organizations o
+        JOIN users u ON u.organization_id = o.id
+        WHERE u.id = %s
+        """
+    with get_db() as conn:
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                sql,
+                (user_id,),
+            )
+            return cur.fetchone()
+        finally:
+            cur.close()

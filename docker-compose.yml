@@ -1,40 +1,59 @@
 services:
-  mysql:
+  db:
     image: mysql:8.0
-    container_name: mysql_db
-    env_file:
-      - .env
+    container_name: carbon-mysql
+    env_file: .env
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     ports:
-      - "3306:3306"
+      - "${MYSQL_PORT}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     command: --default-authentication-plugin=mysql_native_password
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  migrator:
+    build:
+      context: .
+      dockerfile: database/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy	
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_NAME: ${MYSQL_DATABASE}
+    volumes:
+      - ./database:/app/database
+    restart: "no"
 
   backend:
     build: 
       context: ./backend
       dockerfile: Dockerfile
-    container_name: backend
+    container_name: carbon-backend
     depends_on:
-      mysql:
+      db:
         condition: service_healthy
-    env_file:
-      - .env
+      migrator:
+         condition: service_completed_successfully
+    env_file: .env
     ports:
       - "5001:5000"
     volumes:
       - ./backend:/app
-      - ./scripts:/app/scripts
-    command: >
-      sh -c "
-        python /app/scripts/init_db.py &&
-        python run.py
-      "
+      # - ./scripts:/app/scripts
+    command: ["python", "run.py"]
     restart: unless-stopped
 
 volumes:
