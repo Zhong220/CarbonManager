@@ -95,7 +95,7 @@ paths:
   /auth/register:
     post:
       summary: Register a new user
-      tags: [Auth]
+      tags: [Authorization]
       requestBody:
         required: true
         content:
@@ -109,13 +109,13 @@ paths:
                 password:
                   type: string
                   example: mysecret
+                role:
+                  type: string
+                  example: shop
                 user_name:
                   type: string
                   example: Alice
-                user_type:
-                  type: string
-                  example: shop
-                org_name:
+                organization_name:
                   type: string
                   example: Lee's Tea
       responses:
@@ -126,16 +126,22 @@ paths:
               schema:
                 type: object
                 properties:
-                  message:
+                  status_message:
                     type: string
                   access_token:
                     type: string
                   refresh_token:
                     type: string
+                  account:
+                    type: string
+                  password:
+                    type: string
                   user_name:
                     type: string
-                  user_type:
+                  role:
                     type: string
+                  current_organization_id:
+                    type: integer
         "400":
           description: Missing or invalid input
         "409":
@@ -144,7 +150,7 @@ paths:
   /auth/login:
     post:
       summary: Login with account and password
-      tags: [Auth]
+      tags: [Authorization]
       requestBody:
         required: true
         content:
@@ -166,12 +172,18 @@ paths:
               schema:
                 type: object
                 properties:
-                  message:
+                  status_message:
+                    type: string
+                  account:
                     type: string
                   access_token:
                     type: string
                   refresh_token:
                     type: string
+                  role:
+                    type: string
+                  current_organization_id:
+                    type: integer
         "400":
           description: Invalid input
         "401":
@@ -179,7 +191,7 @@ paths:
   /auth/me:
     get:
       summary: Get current logged-in user
-      tags: [Auth]
+      tags: [Authorization]
       security:
         - BearerAuth: []
       responses:
@@ -205,7 +217,7 @@ paths:
           description: Unauthorized
     put:
       summary: Update current logged-in user profile
-      tags: [Auth]
+      tags: [Authorization]
       security:
         - BearerAuth: []
       requestBody:
@@ -286,7 +298,6 @@ paths:
           description: Product type created successfully
           content:
             application/json:
-
                   name:
                     type: string
         "400":
@@ -380,11 +391,188 @@ paths:
                 schema:
                   type: object
                   properties:
-                    message:
+                    status message:
                       type: string
+                    id:
+                      type: integer
+                    product type_name:
+                      type: string
+                    order_id:
+                      type: integer
+                    name:
+                      type: string
+                    
           "401":
             description: Unauthorized     
           "404":
             description: Product type not found
+  /product_types/{product_type_id}/products:
+    get:
+      summary: Get all products under a product type
+      tags: [Products]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: List of products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+    post:
+      summary: Create a new product under a product type
+      tags: [Products]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Batch #12345
+      responses:
+        "201":
+          description: Product created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthorized
+        "404":
+          description: Product type not found
+        "409":
+          description: Product already exists
+  /product_types/{product_type_id}/products/{product_id}:
+    get:
+      summary: Get a product by ID
+      tags: [Products]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }     
+      responses:
+        "200":
+          description: Product details
+          content:
+            application/json:
+              schema:   
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  product_type_id:
+                    type: integer
+        "404":
+          description: Product not found
+    put:    
+      summary: Update a product by ID
+      tags: [Products]
+      security:
+        - BearerAuth: []        
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:      
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Updated Batch #12345
+      responses:
+        "200":
+          description: Product updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer     
+                  name:
+                    type: string
+                  product_type_id:
+                    type: integer
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthorized
+        "404":
+          description: Product not found
+    delete:
+      summary: Delete a product by ID
+      tags: [Products]
+      security:
+        - BearerAuth: []
+      parameters:     
+        - name: product_type_id  
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }  
+        - name: product_id
+          in: path
+          required: true        
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Product deleted successfully
+          content:
+            application/json: 
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "401":
+          description: Unauthorized
+        "404":
+          description: Product not found      
 
   

@@ -7,30 +7,44 @@ from db_connection import get_db
 
 # -------------- CREATE A PRODUCT TYPE ---------------
 def create_product_type(organization_id: int, name: str) -> int:
-    sql = """
-        INSERT INTO product_types (organization_id, name)
-        VALUES (%s, %s)
-    """
     with get_db() as conn:
         cur = conn.cursor()
         try:
+            conn.start_transaction()  # disables autocommit for this tx
+
             cur.execute(
-                sql,
-                (organization_id, name),
+                "SELECT COALESCE(MAX(order_id), 0) + 1 "
+                "FROM product_types WHERE organization_id=%s FOR UPDATE",
+                (organization_id,)
+            )
+            (next_order,) = cur.fetchone()
+
+            cur.execute(
+                "INSERT INTO product_types (organization_id, name, order_id) "
+                "VALUES (%s, %s, %s)",
+                (organization_id, name, next_order,)
             )
             conn.commit()
             return cur.lastrowid
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             cur.close()
 
 
 # ----- GET ALL PRODUCT TYPES UNDER ONE ORG ---------------
-def get_product_types_by_org(organization_id: int) -> list[dict]:
+def list_product_types(organization_id: int) -> list[dict]:
     sql = """
-        SELECT id, name, organization_id, created_at
+        SELECT 
+            id, 
+            name, 
+            order_id,
+            organization_id, 
+            created_at
         FROM product_types
         WHERE organization_id = %s
-        ORDER BY created_at DESC
+        ORDER BY order_id ASC
     """
     with get_db() as conn:
         cur = conn.cursor(dictionary=True)
@@ -44,7 +58,7 @@ def get_product_types_by_org(organization_id: int) -> list[dict]:
             cur.close()
 
 
-# -------------- UPDATE A PRODUCT TYPE
+# -------------- UPDATE A PRODUCT TYPE --------------
 def modify_product_type(
     new_name: str, organization_id: int, product_type_id: int
 ) -> bool:
