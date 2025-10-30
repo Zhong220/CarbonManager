@@ -60,10 +60,7 @@ def create_app(config_class=Config):
 
 
 app = create_app()
-CORS(
-    app,
-    resources={r"/*": {"origins": ["http://127.0.0.1:5001", "http://localhost:5000"]}},
-)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 if __name__ == "__main__":
     app.run(
