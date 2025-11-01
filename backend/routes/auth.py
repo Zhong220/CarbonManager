@@ -31,9 +31,8 @@ def register():
     account = (data.get("account") or "").strip().lower()
     password = data.get("password")
     user_name = data.get("user_name")
-    user_type = data.get("user_type", "customer")
-    user_type = (data.get("user_type") or "customer").strip().lower()
-    org_name = (data.get("org_name") or "").strip() if user_type == "shop" else None
+    user_type = (data.get("role") or "customer").strip().lower()
+    org_name = (data.get("organization_name") or "").strip() if user_type == "shop" else None
 
     if not account or not password or not user_name:
         return jsonify(error="account, password, and user_name are required"), 400
@@ -62,11 +61,14 @@ def register():
 
     return (
         jsonify(
-            message="201: User registered successfully",
+            status_message="201: User registered successfully",
             access_token=tokens["access_token"],
             refresh_token=tokens["refresh_token"],
+            account=account,
+            password=password,
             user_name=user_name,
-            user_type=user_type,
+            role=user_type,
+            current_organization_id=org_id
         ),
         201,
     )
@@ -97,9 +99,12 @@ def login():
     )
     return (
         jsonify(
-            message="200: Login successful",
+            status_message="200: Login successful",
+            account=account,
             access_token=tokens["access_token"],
             refresh_token=tokens["refresh_token"],
+            role=user["user_type"],
+            current_organization_id=user["organization_id"],
         ),
         200,
     )
