@@ -17,6 +17,8 @@ DB_CONTAINER?=carbon-mysql         # container_name (matches docker-compose.yml)
 DB_ROOT?=root
 DB_HOST_IN_CONTAINER?=127.0.0.1    # for mysqladmin ping inside container
 URL=http://127.0.0.1:5001
+CHAIN_SVC?=chain-service
+CHAIN_URL=http://127.0.0.1:3001
 
 # --- Utility ---
 help: ## Show available make commands
@@ -97,7 +99,7 @@ logs: ## Tail backend logs
 	$(MAKE) open-site
 
 # ========== One-shot flows ==========
-up: down up-db migrate up-backend ## Start clean: fix networks -> DB -> migrations -> backend
+up: down up-db migrate up-backend up-chain ## Start clean: fix networks -> DB -> migrations -> backend -> chain
 	@echo "🚀 All services are up"
 	$(MAKE) open-site
 
@@ -168,3 +170,25 @@ be-fix: ## Auto-fix
 
 be-setup: ## Install backend dev deps
 	cd backend && pip install -r requirements.txt -r requirements-dev.txt
+
+# ========== Chain Service ==========
+
+up-chain: ## Start chain-service container
+	@echo "🚀 Starting Chain Service..."
+	docker compose up -d $(CHAIN_SVC)
+	@echo "⏳ Waiting for chain-service to be ready..."
+	@for i in $$(seq 1 30); do \
+	  code=$$(curl -s -o /dev/null -w "%{http_code}" "$(CHAIN_URL)/health" || true); \
+	  if [ "$$code" = "200" ]; then echo "✅ Chain-service is ready at $(CHAIN_URL)"; exit 0; fi; \
+	  sleep 1; \
+	done; \
+	echo "❌ Chain-service did not respond in time"; exit 1
+
+rebuild-chain: ## Rebuild chain-service image without cache
+	@echo "🔧 Rebuilding chain-service image..."
+	docker compose build --no-cache $(CHAIN_SVC)
+
+logs-chain: ## Tail chain-service logs
+	@echo "📜 Showing chain-service logs..."
+	docker compose logs -f $(CHAIN_SVC)
+
