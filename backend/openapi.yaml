@@ -256,6 +256,24 @@ paths:
           description: Invalid input
         "401":
           description: Unauthorized
+    delete:
+      summary: Delete current logged-in user
+      tags: [Authorization]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: User deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status_message:
+                    type: string
+        "401":
+          description: Unauthorized
+                
   /product_types:
     get:
       summary: Get all available product types from this organization 
