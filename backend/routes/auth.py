@@ -19,6 +19,7 @@ from models.user_model import (
     get_user_by_account,
     get_user_by_id,
     verify_password,
+    delete_user,
 )
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")  # all routes start with /auth
@@ -158,3 +159,17 @@ def update_me():
             return jsonify(error="organization not found"), 404
         assign_user_to_org(user_id, org["id"])
     return jsonify(message="user updated"), 200
+
+
+
+#-------- DELETE ME --------
+@auth_bp.delete("/me")
+@jwt_required()
+def delete_me():
+    user_id = int(get_jwt_identity())
+    user = get_user_by_id(user_id)
+    if not user:
+        return jsonify(error="user not found"), 404
+    delete_user(user_id)
+    return jsonify(message="user deleted"), 200
+
