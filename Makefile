@@ -71,6 +71,10 @@ migrations-status: ## Show applied migrations in schema_migrations table
 	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "SELECT id, filename, applied_at FROM schema_migrations ORDER BY id;"
 
+seed-factors: ## Seed emission factors into DB
+	@echo "🌱 Seeding emission factors into DB..."
+	docker compose exec backend sh -c "cd /app && python -m store_factors.seed_factors"
+
 # ========== Backend ==========
 
 rebuild: ## Rebuild backend image without cache
@@ -95,7 +99,9 @@ up-backend: ## Start Flask backend
 logs: ## Tail backend logs
 	docker compose logs -f $(BACKEND_SVC) &
 	$(MAKE) open-site
-
+	
+ls-backend: ## List backend files (recursive)
+	docker compose exec backend ls -R
 # ========== One-shot flows ==========
 up: down up-db migrate up-backend ## Start clean: fix networks -> DB -> migrations -> backend
 	@echo "🚀 All services are up"
@@ -148,23 +154,23 @@ show-seed-emission: ## Show seed emission(s)
 	  mysql -N -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "SELECT id, name, product_id, stage_id FROM emissions ORDER BY id DESC LIMIT 5;"
 
-# ========== CI Backend ==========
+# # ========== CI Backend ==========
 
-be-format: ## Auto-format (ruff imports + black)
-	cd backend && ruff check . --fix
-	cd backend && python -m black .
+# be-format: ## Auto-format (ruff imports + black)
+# 	cd backend && ruff check . --fix
+# 	cd backend && python -m black .
 
-be-lint: ## Lint (ruff + black check)
-	cd backend && ruff check .
-	cd backend && python -m black --check .
+# be-lint: ## Lint (ruff + black check)
+# 	cd backend && ruff check .
+# 	cd backend && python -m black --check .
 
-be-test:
-	cd backend && pytest -q
+# be-test:
+# 	cd backend && pytest -q
 
-be-fix: ## Auto-fix
-	cd backend && ruff check . --fix
-	cd backend && python -m black .
-	$(MAKE) be-lint
+# be-fix: ## Auto-fix
+# 	cd backend && ruff check . --fix
+# 	cd backend && python -m black .
+# 	$(MAKE) be-lint
 
-be-setup: ## Install backend dev deps
-	cd backend && pip install -r requirements.txt -r requirements-dev.txt
+# be-setup: ## Install backend dev deps
+# 	cd backend && pip install -r requirements.txt -r requirements-dev.txt
