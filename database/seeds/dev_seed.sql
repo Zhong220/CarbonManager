@@ -17,8 +17,8 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
 SET @u_shop := LAST_INSERT_ID();
 
 -- product type
-INSERT INTO product_types (organization_id, name)
-VALUES (@org, 'DemoType')
+INSERT INTO product_types (order_id, organization_id, name)
+VALUES (1, @org, 'DemoType')
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
 SET @ptype := LAST_INSERT_ID();
 

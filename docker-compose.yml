@@ -38,8 +38,6 @@ services:
     volumes:
       - ./database:/app/database
     restart: "no"
-    volumes:
-      - ./database:/app/database
     networks:
       - carbonmanager_net
 
