@@ -1,7 +1,8 @@
-// storage.ts
+// src/utils/storage.ts
 // ===============================================================
 // Types & Imports
 // ===============================================================
+import { openDB, IDBPDatabase } from "idb";
 import { FIXED_STAGE_TEMPLATES, StageConfig, LifeRecord } from "./lifecycleTypes";
 
 export type Role = "Farmer" | "Consumer" | "None";
@@ -33,7 +34,6 @@ export interface Category {
   order: number; // for sorting
 }
 
-/* Notes */
 export interface NoteItem {
   id: string;
   title: string;
@@ -43,7 +43,7 @@ export interface NoteItem {
 }
 
 // ===============================================================
-// Keys & Constants
+// Constants / Keys
 // ===============================================================
 const ACCOUNTS_KEY = "accounts_meta";
 const SHOPS_KEY    = "shops_map";
@@ -52,38 +52,105 @@ const CURR_ROLE_KEY= "role";
 const CURR_SHOP_KEY= "currentShopId";
 
 export const DEFAULT_SHOP_ID = "__default_shop__";
-
 const MAX_RECENT_CATS = 12;
 
-// ===============================================================
-// Storage Port (abstraction layer)
-// ===============================================================
-interface StoragePort {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-  keys(): string[];
-}
+// token only in localStorage
+const TOKEN_KEY = "CFP_auth_token";
 
-class LocalStoragePort implements StoragePort {
-  getItem(key: string) { return localStorage.getItem(key); }
-  setItem(key: string, value: string) { localStorage.setItem(key, value); }
-  removeItem(key: string) { localStorage.removeItem(key); }
-  keys() {
-    const ks: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k) ks.push(k);
-    }
-    return ks;
+// ===============================================================
+// IndexedDB + Memory Cache (sync API) —— single-file version
+// ===============================================================
+type KVDB = IDBPDatabase;
+const DB_NAME = "carbon-manager";
+const DB_VERSION = 1;
+const STORE_KV = "kv";
+
+// sync memory cache
+const CACHE = new Map<string, string>();
+
+let dbPromise: Promise<KVDB> | null = null;
+async function getDB(): Promise<KVDB> {
+  if (!dbPromise) {
+    dbPromise = openDB(DB_NAME, DB_VERSION, {
+      upgrade(db, oldV) {
+        if (oldV < 1) db.createObjectStore(STORE_KV); // key: string, value: string
+      },
+    });
   }
+  return dbPromise;
 }
 
-// Currently using localStorage. Swap this port if migrating to IndexedDB/backend.
-const storage: StoragePort = new LocalStoragePort();
+async function hydrateCacheFromIDB() {
+  const db = await getDB();
+  const tx = db.transaction(STORE_KV, "readonly");
+  const store = tx.objectStore(STORE_KV);
+  const [keys, values] = await Promise.all([store.getAllKeys(), store.getAll()]);
+  for (let i = 0; i < keys.length; i++) {
+    const k = String(keys[i]);
+    const v = String(values[i] ?? "");
+    CACHE.set(k, v);
+  }
+  await tx.done;
+}
+
+async function migrateLocalStorageIntoIDBIfEmpty() {
+  if (CACHE.size > 0) return;
+  const db = await getDB();
+  const tx = db.transaction(STORE_KV, "readwrite");
+  const store = tx.objectStore(STORE_KV);
+
+  // move non-token data; token stays in localStorage
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i)!;
+    if (k === TOKEN_KEY) continue;
+    const v = localStorage.getItem(k);
+    if (v != null) {
+      await store.put(v, k);
+      CACHE.set(k, v);
+    }
+  }
+  await tx.done;
+}
+
+let readyDone = false;
+/** Call once on app start: IDB -> memory cache + one-time localStorage migration */
+export async function initStorage(): Promise<void> {
+  if (readyDone) return;
+  await hydrateCacheFromIDB();
+  await migrateLocalStorageIntoIDBIfEmpty();
+  readyDone = true;
+}
+
+/** Sync storage API with write-through IDB */
+const storage = {
+  getItem(key: string): string | null {
+    return CACHE.has(key) ? CACHE.get(key)! : null;
+  },
+  setItem(key: string, value: string): void {
+    CACHE.set(key, value);
+    void (async () => {
+      const db = await getDB();
+      const tx = db.transaction(STORE_KV, "readwrite");
+      await tx.objectStore(STORE_KV).put(value, key);
+      await tx.done;
+    })();
+  },
+  removeItem(key: string): void {
+    CACHE.delete(key);
+    void (async () => {
+      const db = await getDB();
+      const tx = db.transaction(STORE_KV, "readwrite");
+      await tx.objectStore(STORE_KV).delete(key);
+      await tx.done;
+    })();
+  },
+  keys(): string[] {
+    return Array.from(CACHE.keys());
+  },
+};
 
 // ===============================================================
-// Tiny Event Emitter (same-tab live UI notifications)
+// Tiny Event Emitter (same-tab)
 // ===============================================================
 type StageCfgChangedPayload = { shopId: string; productId: string; cfg: StageConfig[] };
 type StepOrderChangedPayload = { shopId: string; productId: string; stageId: string; order: string[] };
@@ -91,6 +158,7 @@ type StepOrderChangedPayload = { shopId: string; productId: string; stageId: str
 type BusMap = {
   "stagecfg:changed": StageCfgChangedPayload;
   "steporder:changed": StepOrderChangedPayload;
+  "account:deleted": { accountId: string };
 };
 type BusHandler<K extends keyof BusMap> = (p: BusMap[K]) => void;
 
@@ -110,12 +178,14 @@ const Emitter = (() => {
   };
 })();
 
-// Optional subscription APIs
 export function onStageConfigChanged(fn: BusHandler<"stagecfg:changed">) {
   return Emitter.on("stagecfg:changed", fn);
 }
 export function onStepOrderChanged(fn: BusHandler<"steporder:changed">) {
   return Emitter.on("steporder:changed", fn);
+}
+export function onAccountDeleted(fn: BusHandler<"account:deleted">) {
+  return Emitter.on("account:deleted", fn);
 }
 
 // ===============================================================
@@ -135,16 +205,13 @@ function saveJSON(key: string, value: any) {
 }
 const uniq = <T,>(arr: T[]) => Array.from(new Set(arr));
 const isBlank = (s?: string | null) => !s || String(s).trim() === "";
-const hasValue = (s?: string | null) => !isBlank(s);
 
-// shopId resolution: param > current selection > default
 function ensureShopId(input?: string): string {
   const sid = input ?? AuthStore.getCurrentShopId() ?? DEFAULT_SHOP_ID;
   return sid;
 }
 export const getCurrentShopIdSafe = () => ensureShopId();
 
-// URL-safe uid
 function uid(prefix = ""): string {
   const b = crypto.getRandomValues(new Uint8Array(16));
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -152,15 +219,13 @@ function uid(prefix = ""): string {
   for (let i = 0; i < b.length; i++) id += chars[b[i] & 63];
   return prefix ? `${prefix}_${id}` : id;
 }
-
-// Accept number|string and normalize to string
 function normalizePid(pid: number | string): string {
   if (typeof pid === "number") return String(pid);
   return String(pid || "").trim();
 }
 
 // ===============================================================
-// Key Helpers (namespacing)
+// Key Helpers
 // ===============================================================
 const Key = {
   products: (shopId: string) => `shop_${shopId}_products`,
@@ -177,10 +242,18 @@ const Key = {
 // Stores / Services
 // ===============================================================
 
-// -------- AuthStore -----------------------------------------------------------
+// -------- AuthStore (token only in localStorage) ----------------
 const LEGACY_CURR_ACC_KEY = "current_account";
 
 const AuthStore = {
+  getToken(): string | null {
+    return localStorage.getItem(TOKEN_KEY);
+  },
+  setToken(v: string | null) {
+    if (v == null || v === "") localStorage.removeItem(TOKEN_KEY);
+    else localStorage.setItem(TOKEN_KEY, v);
+  },
+
   getAccount(): string { return storage.getItem(CURR_ACC_KEY) || ""; },
   setAccount(v: string) { storage.setItem(CURR_ACC_KEY, v); },
   clearAccount() { storage.removeItem(CURR_ACC_KEY); },
@@ -201,12 +274,13 @@ const AuthStore = {
   },
 
   softLogout() {
+    // clear auth state but keep app data
     storage.removeItem(CURR_ACC_KEY);
     storage.removeItem(CURR_ROLE_KEY);
     storage.removeItem(CURR_SHOP_KEY);
+    localStorage.removeItem(TOKEN_KEY);
   },
 
-  // Move legacy keys to the new ones and fix role=None if meta has a role
   migrateLegacyAuthKeys() {
     try {
       const legacy = storage.getItem(LEGACY_CURR_ACC_KEY);
@@ -294,10 +368,10 @@ const ShopStore = {
     const shop  = shops[shopId];
     if (!shop) return;
 
-    // Remove all data under this shop
+    // remove all data under this shop
     CleanupService.clearShopAllData(shopId);
 
-    // Remove shop from owner meta and adjust currentShopId if needed
+    // remove from owner meta and adjust currentShopId if needed
     const metas = AccountStore.getAccountsMeta();
     const ownerMeta = metas[shop.owner];
     if (ownerMeta) {
@@ -325,8 +399,6 @@ const ShopStore = {
 
 // -------- ProductStore & RecordStore -----------------------------------------
 const ProductStore = {
-  keyProducts: (sid: string) => Key.products(sid),
-
   load(shopId?: string): Product[] {
     const sid = ensureShopId(shopId);
     return loadJSON<Product[]>(Key.products(sid), []);
@@ -360,7 +432,7 @@ const ProductStore = {
     const sid = ensureShopId(shopId);
     const products = ProductStore.load(sid);
 
-    const srcId = normalizePid(srcPid);
+    const srcId = String(srcPid);
     const src = products.find(p => p.id === srcId);
     if (!src) throw new Error("找不到來源商品");
 
@@ -372,7 +444,7 @@ const ProductStore = {
     };
     ProductStore.save([...products, newProd], sid);
 
-    // Clone records together with the product
+    // clone records
     const nowMs  = Date.now();
     const nowSec = Math.floor(nowMs / 1000);
     const srcRecords = RecordStore.load(srcId, sid) || [];
@@ -399,7 +471,6 @@ const ProductStore = {
     ProductStore.save(list, sid);
   },
 
-  // Accept id/serial/legacy numeric id and resolve to product id
   findIdByAnyIdent(shopId: string, ident: string | number): string | null {
     const sid = ensureShopId(shopId);
     const products = ProductStore.load(sid);
@@ -452,7 +523,7 @@ const RecordStore = {
     const sid = ensureShopId(shopId);
     const pidStr = normalizePid(pid);
     if (!pidStr) {
-      console.warn("[loadRecords] 空的 productId，返回空陣列", { sid, pid });
+      console.warn("[loadRecords] empty productId, return []", { sid, pid });
       return [];
     }
     const key = Key.records(sid, pidStr);
@@ -464,17 +535,14 @@ const RecordStore = {
     const sid = ensureShopId(shopId);
     const pidStr = normalizePid(pid);
     if (!pidStr) {
-      console.warn("[saveRecords] 空的 productId，略過寫入", { sid, pid });
+      console.warn("[saveRecords] empty productId, skip", { sid, pid });
       return;
     }
     const key = Key.records(sid, pidStr);
     try {
       saveJSON(key, Array.isArray(list) ? list : []);
     } catch (e) {
-      console.error("[saveRecords] 寫入失敗", { key, e });
-    }
-    if (sid === DEFAULT_SHOP_ID) {
-      console.info("[saveRecords] 寫入在 DEFAULT_SHOP_ID 命名空間", { key });
+      console.error("[saveRecords] write failed", { key, e });
     }
   },
 
@@ -505,7 +573,7 @@ const RecordStore = {
     const sid = ensureShopId(shopId);
     const pidStr = normalizePid(rec?.productId ?? "");
     if (!pidStr) {
-      console.warn("[upsertLifeRecord] productId 缺失，略過", rec);
+      console.warn("[upsertLifeRecord] missing productId, skip", rec);
       return [];
     }
 
@@ -569,11 +637,9 @@ const StepOrderStore = {
     if (isBlank(pid) || isBlank(stageId)) return;
     const key = Key.stepOrder(sid, pid, stageId);
     storage.setItem(key, JSON.stringify(orderedStepIds || []));
-    // broadcast
     Emitter.emit("steporder:changed", { shopId: sid, productId: pid, stageId, order: orderedStepIds || [] });
   },
 
-  // Ensure persisted order is aligned with incoming steps (append new, drop missing)
   ensureFromSteps(shopId: string, productId: string | number, stageId: string, steps: { id: string }[]): string[] {
     const sid = ensureShopId(shopId);
     const pid = normalizePid(productId);
@@ -753,8 +819,6 @@ function cloneTemplate(): StageConfig[] {
   return JSON.parse(JSON.stringify(FIXED_STAGE_TEMPLATES));
 }
 function deepClone<T>(v: T): T { return JSON.parse(JSON.stringify(v)); }
-
-// Utility: support both step.label / step.name fields
 function setStepLabel(step: any, newLabel: string) {
   if ("label" in step) step.label = newLabel;
   else if ("name" in step) step.name = newLabel;
@@ -766,7 +830,6 @@ const StageConfigStore = {
     const sid = ensureShopId(shopId);
     const pid = String(productId ?? "").trim();
 
-    // Remove legacy empty-pid key
     const emptyKey = Key.stageCfg(sid, "");
     if (storage.getItem(emptyKey)) storage.removeItem(emptyKey);
 
@@ -778,9 +841,7 @@ const StageConfigStore = {
       if (!raw) {
         const tpl = cloneTemplate();
         storage.setItem(key, JSON.stringify(tpl));
-        // First-time: sync step orders
         tpl.forEach(s => StepOrderStore.ensureFromSteps(sid, pid, (s as any).id, (s as any).steps || []));
-        // Broadcast
         Emitter.emit("stagecfg:changed", { shopId: sid, productId: pid, cfg: deepClone(tpl) });
         return tpl;
       }
@@ -792,7 +853,6 @@ const StageConfigStore = {
         Emitter.emit("stagecfg:changed", { shopId: sid, productId: pid, cfg: deepClone(tpl) });
         return tpl;
       }
-      // On read: repair order if steps changed
       (parsed as any[]).forEach(s =>
         StepOrderStore.ensureFromSteps(sid, pid, s.id, (s.steps ?? []))
       );
@@ -813,12 +873,10 @@ const StageConfigStore = {
     const key = Key.stageCfg(sid, pid);
     const data = Array.isArray(cfg) && cfg.length > 0 ? cfg : cloneTemplate();
     storage.setItem(key, JSON.stringify(data));
-    // Keep step_order in sync for each stage
     (data as any[]).forEach(s => {
       const steps = (s.steps ?? []) as { id: string }[];
       StepOrderStore.ensureFromSteps(sid, pid, s.id, steps);
     });
-    // Broadcast
     Emitter.emit("stagecfg:changed", { shopId: sid, productId: pid, cfg: deepClone(data) });
   },
 
@@ -872,7 +930,6 @@ const CleanupService = {
     storage.removeItem(Key.categories(sid));
     storage.removeItem(Key.recentCats(sid));
 
-    // Sweep leftovers
     CleanupService.sweepOrphanDataForShop(sid);
   },
 
@@ -943,12 +1000,10 @@ const CleanupService = {
     });
     ids.add(DEFAULT_SHOP_ID);
     Object.values(ShopStore.getMap()).forEach(s => ids.add(s.id));
-
     if (storage.getItem("frequentProducts")) storage.removeItem("frequentProducts");
     ids.forEach(sid => CleanupService.sweepOrphanDataForShop(sid));
   },
 
-  // Clear app data while keeping migration flags
   clearAllAppDataButKeepMigrations() {
     const APP_KEY_PREFIXES = [
       "shop__", "shop_", "stage_config:", "step_order:", "target:",
@@ -959,9 +1014,10 @@ const CleanupService = {
 
     RemoveByPattern(/^shop_.*_batches$/);
 
-    [ "CFP_auth_token", CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY, SHOPS_KEY ].forEach(k => storage.removeItem(k));
-    // If you'd like to also wipe accounts_meta, uncomment:
-    // storage.removeItem(ACCOUNTS_KEY);
+    [ TOKEN_KEY, CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY, SHOPS_KEY ].forEach(k => {
+      if (k === TOKEN_KEY) localStorage.removeItem(k); else storage.removeItem(k);
+    });
+    // storage.removeItem(ACCOUNTS_KEY); // keep accounts unless you want a full nuke
   },
 
   clearShopsData(shopIds: string[]) {
@@ -987,7 +1043,7 @@ const CleanupService = {
 
   hardAppReset() { CleanupService.clearAllAppDataButKeepMigrations(); },
 
-  hardAppNuke() {
+  hardAppNuke()  {
     RemoveByPattern(/^shop__/);
     RemoveByPattern(/^shop_/);
     RemoveByPattern(/^stage_config:/);
@@ -997,12 +1053,14 @@ const CleanupService = {
     RemoveByPattern(/_batches$/);
 
     [
-      "CFP_auth_token",
+      TOKEN_KEY,
       CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY,
       SHOPS_KEY, ACCOUNTS_KEY,
       "__migrated_multi_shop__", "__migrated_uid_pk__",
       LEGACY_CURR_ACC_KEY,
-    ].forEach(k => storage.removeItem(k));
+    ].forEach(k => {
+      if (k === TOKEN_KEY) localStorage.removeItem(k); else storage.removeItem(k);
+    });
   },
 };
 
@@ -1154,10 +1212,83 @@ const BrowseService = {
 };
 
 // ===============================================================
-// Public API
+// AccountService (high-level account deletion facade)
+// ===============================================================
+type DeleteAccountMode = "local-only" | "remote+local" | "dry-run";
+type DeleteAccountResult =
+  | { ok: true; mode: DeleteAccountMode; deletedAccount?: string; previewKeys?: string[] }
+  | { ok: false; mode: DeleteAccountMode; reason: string };
+
+function collectLocalKeysOfAccount(accountId: string): string[] {
+  const keys: string[] = [];
+
+  // account-bound notes
+  keys.push(Key.notes(accountId));
+
+  // scan shops for this account (metas are source of truth)
+  const metas = AccountStore.getAccountsMeta();
+  const mineIds = new Set((metas[accountId]?.shopIds) ?? []);
+
+  // direct scan by key prefix to avoid missing legacy keys
+  storage.keys().forEach(k => {
+    // shop-scoped data
+    const m1 = k.match(/^shop_(.+?)_(products|categories|records_.+|batches)$/);
+    if (m1 && mineIds.has(m1[1])) keys.push(k);
+    // stage config / step order (shop-scoped)
+    const m2 = k.match(/^stage_config:([^:]+):/);
+    if (m2 && mineIds.has(m2[1])) keys.push(k);
+    const m3 = k.match(/^step_order:([^:]+):/);
+    if (m3 && mineIds.has(m3[1])) keys.push(k);
+    // legacy/target leftovers
+    if (k.startsWith("target:")) keys.push(k);
+  });
+
+  // auth-related state
+  keys.push(CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY);
+
+  return Array.from(new Set(keys));
+}
+
+export const AccountService = {
+  /**
+   * Delete current account.
+   * - local-only: clear local app data of the user (default)
+   * - remote+local: call backend first, then clear local (TODO wire API)
+   * - dry-run: preview which keys would be removed
+   */
+  async deleteSelf(mode: DeleteAccountMode = "local-only"): Promise<DeleteAccountResult> {
+    const id = AuthStore.getAccount();
+    if (!id) return { ok: false, mode, reason: "no-current-account" };
+
+    if (mode === "dry-run") {
+      const previewKeys = collectLocalKeysOfAccount(id);
+      return { ok: true, mode, previewKeys };
+    }
+
+    if (mode === "remote+local") {
+      try {
+        // TODO: call backend to delete/disable the account
+        // await http.delete(`/users/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${AuthStore.getToken()}` }});
+      } catch (_e) {
+        return { ok: false, mode, reason: "remote-failed" };
+      }
+    }
+
+    // local cleanup
+    deleteAccountCompletely(id);
+
+    // broadcast event for UI (e.g., UserContext to softLogout + redirect)
+    Emitter.emit("account:deleted", { accountId: id });
+
+    return { ok: true, mode, deletedAccount: id };
+  },
+};
+
+// ===============================================================
+// Public API (kept compatible with your existing imports)
 // ===============================================================
 
-// Auth / Role
+// Auth / Role / Token
 export const getAccount        = () => AuthStore.getAccount();
 export const setAccount        = (v: string) => AuthStore.setAccount(v);
 export const clearAccount      = () => AuthStore.clearAccount();
@@ -1165,6 +1296,8 @@ export const getRole           = (): Role => AuthStore.getRole();
 export const setRole           = (v: Role) => AuthStore.setRole(v);
 export const getCurrentShopId  = () => AuthStore.getCurrentShopId();
 export const setCurrentShopId  = (id: string) => AuthStore.setCurrentShopId(id);
+export const getToken          = () => AuthStore.getToken();
+export const setToken          = (t: string | null) => AuthStore.setToken(t);
 
 // Accounts
 export const getAccountsMeta   = () => AccountStore.getAccountsMeta();
@@ -1173,6 +1306,7 @@ export const accountExists     = (account: string) => AccountStore.exists(accoun
 export const createAccount     = (a: string, p: string, r: Role = "None") => AccountStore.create(a, p, r);
 export const verifyLogin       = (a: string, p: string) => AccountStore.verifyLogin(a, p);
 export const setRoleOf         = (a: string, r: Role) => AccountStore.setRoleOf(a, r);
+export const getAllAccountIds  = () => AccountStore.getAllIds();
 
 // Shops
 export const getShopsMap       = () => ShopStore.getMap();
@@ -1217,6 +1351,14 @@ export const pushRecentCategoryId = (catId: string | null | undefined, shopId?: 
 export const loadNotes         = (acc: string) => NoteStore.load(acc);
 export const saveNotes         = (acc: string, list: NoteItem[]) => NoteStore.save(acc, list);
 
+// Migration & Cleanup
+export const migrateLegacyAuthKeys = () => AuthStore.migrateLegacyAuthKeys();
+export const migrateLegacyData     = () => MigrationService.migrateLegacyData();
+export const bootStorageHousekeeping = () => MigrationService.bootStorageHousekeeping(); // ← 加這行
+export const sweepOrphanDataForShop= (shopId?: string) => CleanupService.sweepOrphanDataForShop(shopId);
+export const debugPrintProducts    = (shopId?: string) => ProductStore.debugPrint(shopId);
+
+
 // Stage Config
 export const loadStageConfig   = (shopId?: string, productId?: string) => StageConfigStore.load(shopId, productId);
 export const saveStageConfig   = (shopId?: string, productId?: string, cfg?: StageConfig[]) => StageConfigStore.save(shopId, productId, cfg);
@@ -1228,7 +1370,7 @@ export const saveStepOrder     = (shopId: string, productId: string | number, st
 export const ensureStepOrderFromSteps = (shopId: string, productId: string | number, stageId: string, steps: { id: string }[]) =>
   StepOrderStore.ensureFromSteps(shopId, productId, stageId, steps);
 
-// Step edit APIs — return updated cfg; keep step_order in sync and broadcast
+// Step edit helpers
 export function renameStep(shopId: string, productId: string | number, stageId: string, stepId: string, newLabel: string): StageConfig[] {
   const sid = ensureShopId(shopId);
   const pid = normalizePid(productId);
@@ -1244,7 +1386,7 @@ export function renameStep(shopId: string, productId: string | number, stageId: 
 
   const nextCfg = [...cfg];
   nextCfg[sIdx] = { ...cfg[sIdx], steps: [...steps] };
-  StageConfigStore.save(sid, pid, nextCfg); // will sync step_order + broadcast
+  StageConfigStore.save(sid, pid, nextCfg);
   return deepClone(nextCfg);
 }
 
@@ -1257,11 +1399,11 @@ export function deleteStep(shopId: string, productId: string | number, stageId: 
 
   const steps = (cfg[sIdx].steps ?? []) as any[];
   const nextSteps = steps.filter(st => st.id !== stepId);
-  if (nextSteps.length === steps.length) return cfg; // no change
+  if (nextSteps.length === steps.length) return cfg;
 
   const nextCfg = [...cfg];
   nextCfg[sIdx] = { ...cfg[sIdx], steps: nextSteps };
-  StageConfigStore.save(sid, pid, nextCfg); // will drop deleted id from order + broadcast
+  StageConfigStore.save(sid, pid, nextCfg);
   return deepClone(nextCfg);
 }
 
@@ -1279,20 +1421,14 @@ export function addStep(shopId: string, productId: string | number, stageId: str
 
   const nextCfg = [...cfg];
   nextCfg[sIdx] = { ...cfg[sIdx], steps: [...steps, newStep] };
-  StageConfigStore.save(sid, pid, nextCfg); // will append to order + broadcast
+  StageConfigStore.save(sid, pid, nextCfg);
   return deepClone(nextCfg);
 }
-
-// Migration & Cleanup / Dev helpers
-export const migrateLegacyAuthKeys = () => AuthStore.migrateLegacyAuthKeys();
-export const migrateLegacyData     = () => MigrationService.migrateLegacyData();
-export const sweepOrphanDataForShop= (shopId?: string) => CleanupService.sweepOrphanDataForShop(shopId);
-export const debugPrintProducts    = (shopId?: string) => ProductStore.debugPrint(shopId);
 
 // Browseable Shops
 export const listBrowsableShops    = () => BrowseService.listBrowsableShops();
 
-// Logout / Login flows
+// Login / Logout (local-only; when API ready, just setToken on login)
 export function softLogout() { AuthStore.softLogout(); }
 export function login(account: string, password: string): boolean {
   const metas = AccountStore.getAccountsMeta();
@@ -1307,11 +1443,9 @@ export function login(account: string, password: string): boolean {
 }
 export function logout() {
   AuthStore.softLogout();
-  storage.removeItem("CFP_auth_token");
-  storage.removeItem(LEGACY_CURR_ACC_KEY);
 }
 
-// Account/shop cleanup & hard reset utilities (backward compatible)
+// Account/shop cleanup & hard reset utilities
 export function clearAllAppDataButKeepMigrations() { CleanupService.clearAllAppDataButKeepMigrations(); }
 export function clearShopsData(shopIds: string[]) { CleanupService.clearShopsData(shopIds); }
 export function deleteAccountCompletely(accountId: string) {
@@ -1331,7 +1465,9 @@ export function deleteAccountCompletely(accountId: string) {
   AccountStore.saveAccountsMeta(metas);
 
   if (AuthStore.getAccount() === accountId) {
-    ["CFP_auth_token", CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY].forEach(k => storage.removeItem(k));
+    [TOKEN_KEY, CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY].forEach(k => {
+      if (k === TOKEN_KEY) localStorage.removeItem(k); else storage.removeItem(k);
+    });
   }
 
   CleanupService.sweepAllShopsLegacyWeirdKeys();
@@ -1340,38 +1476,30 @@ export function deleteAccountCompletely(accountId: string) {
     CleanupService.hardAppNuke();
   }
 }
-export function hardAppReset() { CleanupService.hardAppReset(); }
-export function hardAppNuke()  { CleanupService.hardAppNuke(); }
-export function getAllAccountIds(): string[] { return AccountStore.getAllIds(); }
 export function deleteAllAccountsCompletely() {
   AccountStore.getAllIds().forEach(id => deleteAccountCompletely(id));
   storage.removeItem(ACCOUNTS_KEY);
   storage.removeItem(SHOPS_KEY);
-  ["CFP_auth_token", CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY].forEach(k => storage.removeItem(k));
+  [TOKEN_KEY, CURR_ACC_KEY, CURR_ROLE_KEY, CURR_SHOP_KEY].forEach(k => {
+    if (k === TOKEN_KEY) localStorage.removeItem(k); else storage.removeItem(k);
+  });
   RemoveByPattern(/^target:/);
   RemoveByPattern(/^shop_.*_batches$/);
   RemoveByPattern(/^shop___default_shop___batches$/);
   RemoveByPattern(/^shop__default_shop__batches$/);
   CleanupService.sweepAllShopsLegacyWeirdKeys();
 }
-export function bootStorageHousekeeping() { MigrationService.bootStorageHousekeeping(); }
+export function hardAppReset() { CleanupService.hardAppReset(); }
+export function hardAppNuke()  { CleanupService.hardAppNuke(); }
 
-// --- Backward-compat alias (for old imports) ---
-export function deleteAccount(accountId: string) {
-  return deleteAccountCompletely(accountId);
-}
-
-// Utility near CleanupService: enumerate existing shop ids (incl. inferred)
+// Utilities
 function getAllExistingShopIds(): Set<string> {
   const ids = new Set<string>();
-  // From shops_map
   Object.keys(getShopsMap() || {}).forEach(id => ids.add(id));
-  // Infer from storage key namespaces
   for (const k of storage.keys()) {
     const m = k.match(/^shop_(.+?)_(products|categories|records_.+)$/);
     if (m) ids.add(m[1]);
   }
-  // Include DEFAULT_SHOP_ID if you still keep its namespace
   ids.add(DEFAULT_SHOP_ID);
   return ids;
 }
@@ -1384,7 +1512,6 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i)!;
 
-    // target:<sid>:<pid> → delete if sid doesn't exist, or pid not found in that shop
     if (k.startsWith("target:")) {
       const m = k.match(/^target:([^:]+):(.+)$/);
       if (m) {
@@ -1393,11 +1520,10 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
 
         const isDefault = (sid === "__default_shop__");
         if (isDefault && !includeDefault) {
-          // keep default namespace (set includeDefault:true to purge as well)
+          // keep
         } else if (!existingShopIds.has(sid)) {
           toDel.push(k);
         } else {
-          // sid exists → check if pid belongs to products of this shop
           const prods = loadJSON<Product[]>(`shop_${sid}_products`, []);
           const found = prods.some(p => String(p.id) === String(pid));
           if (!found) toDel.push(k);
@@ -1405,7 +1531,6 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
       }
     }
 
-    // legacy weird keys to purge by default
     if (/^shop___default_shop___batches$/.test(k) || /^shop__default_shop__batches$/.test(k)) {
       toDel.push(k);
     }
@@ -1417,16 +1542,6 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
   }
 }
 
-/**
- * Convert StageConfig[] into a minimal step order payload for backend.
- * Use when sending only stageId and step id order list.
- */
-export function getStepOrderPayload(stages: {
-  id: string;
-  steps: { id: string }[];
-}[]) {
-  return stages.map((s) => ({
-    stageId: s.id,
-    order: s.steps.map((step) => step.id),
-  }));
+export function getStepOrderPayload(stages: { id: string; steps: { id: string }[] }[]) {
+  return stages.map((s) => ({ stageId: s.id, order: s.steps.map((step) => step.id) }));
 }

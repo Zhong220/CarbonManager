@@ -1,18 +1,27 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Modal from "@/ui/components/Modal";
 import { PrimaryButton, GhostButton } from "@/ui/primitives/Button";
 import { Field, FormActions } from "@/ui/primitives/Form";
 import { Container } from "@/ui/primitives/Layout";
 import * as S from "./WelcomePage.styles";
-import RoleDropdown from "@/ui/components/RoleDropdown";
 import { useNavigate } from "react-router-dom";
 
-// 只保留 Role 型別；登入/註冊改走 UserContext
-import { Role } from "@/utils/storage";
 import { useUser } from "@/context/UserContext";
+import type { BackendUserType } from "@/api/auth";
 
 export default function WelcomePage() {
   const [open, setOpen] = useState<null | "login" | "signup">(null);
+  const navigate = useNavigate();
+
+  // 只依賴 Context 的狀態，避免用 localStorage 造成重複導頁
+  const { ready, isAuthed } = useUser();
+
+  // ✅ 初始化完成且確定登入後，導向商品頁
+  useEffect(() => {
+    if (ready && isAuthed) {
+      navigate("/products", { replace: true });
+    }
+  }, [ready, isAuthed, navigate]);
 
   return (
     <S.Bg>
@@ -29,13 +38,10 @@ export default function WelcomePage() {
 
             <S.Title>茶葉商品碳足跡管理平台</S.Title>
             <S.Subtitle>
-              管理並追蹤您的茶葉產品與記錄其碳足跡，
-              讓消費者與茶行攜手打造綠色的未來。
+              管理並追蹤您的茶葉產品與記錄其碳足跡，讓消費者與茶行攜手打造綠色的未來。
             </S.Subtitle>
             <S.Actions>
-              <PrimaryButton onClick={() => setOpen("login")}>
-                登入
-              </PrimaryButton>
+              <PrimaryButton onClick={() => setOpen("login")}>登入</PrimaryButton>
               <GhostButton onClick={() => setOpen("signup")}>註冊</GhostButton>
             </S.Actions>
           </S.Card>
@@ -61,7 +67,7 @@ export default function WelcomePage() {
   );
 }
 
-/* ---- 登入表單 ---- */
+/* -------------------- 登入表單 -------------------- */
 function LoginForm({ onDone }: { onDone: () => void }) {
   const [account, setAcc] = useState("");
   const [password, setPwd] = useState("");
@@ -75,9 +81,9 @@ function LoginForm({ onDone }: { onDone: () => void }) {
     setError("");
     setLoading(true);
     try {
-      await login(account, password);
-      onDone();
-      navigate("/products");
+      await login(account, password); // 成功會寫 token + me
+      onDone();                       // 關閉 Modal
+      navigate("/products");          // 直接跳商品頁
     } catch (err: any) {
       setError(err?.message || "登入失敗");
     } finally {
@@ -89,13 +95,13 @@ function LoginForm({ onDone }: { onDone: () => void }) {
     <form onSubmit={handleSubmit}>
       <h3>登入</h3>
       <Field>
-        <label>帳號</label>
+        <label>電子郵件</label>
         <input
           type="text"
           required
           value={account}
           onChange={(e) => setAcc(e.target.value)}
-          placeholder="請輸入帳號"
+          placeholder="請輸入電子郵件"
           autoComplete="username"
         />
       </Field>
@@ -123,16 +129,20 @@ function LoginForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-/* ---- 註冊表單 ---- */
+/* -------------------- 註冊表單（後端對齊） -------------------- */
 function SignupForm({ onDone }: { onDone: () => void }) {
   const [account, setAcc] = useState("");
+  const [userName, setUserName] = useState(""); // 後端要求 user_name
   const [password, setPwd] = useState("");
   const [confirmPwd, setConfirmPwd] = useState("");
-  const [role, setRole] = useState<Role>("Farmer");
-  const [shopName, setShopName] = useState(""); // 茶行名稱（Farmer 才需要）
+  const [role, setRole] = useState<BackendUserType>("shop"); // "shop" | "customer"
+  const [shopName, setShopName] = useState(""); // role=shop 時必填
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { signup } = useUser();
+
+  const { register } = useUser();
+  const navigate = useNavigate();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -142,15 +152,26 @@ function SignupForm({ onDone }: { onDone: () => void }) {
       setError("兩次輸入的密碼不一致");
       return;
     }
-    if (role === "Farmer" && !shopName.trim()) {
+    if (!userName.trim()) {
+      setError("請輸入使用者名稱");
+      return;
+    }
+    if (role === "shop" && !shopName.trim()) {
       setError("請輸入茶行名稱");
       return;
     }
 
     setLoading(true);
     try {
-      await signup({ account, password, role, shopName });
-      onDone(); // 註冊完成後先關閉視窗；若要直接導頁可在這裡 navigate
+      await register({
+        account,
+        password,
+        role,
+        user_name: userName,
+        organization_name: role === "shop" ? shopName : undefined,
+      });               // 成功會寫 token + me
+      onDone();         // 關閉 Modal
+      navigate("/products"); // 直接跳商品頁
     } catch (err: any) {
       setError(err?.message || "註冊失敗");
     } finally {
@@ -161,17 +182,30 @@ function SignupForm({ onDone }: { onDone: () => void }) {
   return (
     <form onSubmit={handleSubmit}>
       <h3>註冊</h3>
+
       <Field>
-        <label>帳號</label>
+        <label>電子郵件</label>
         <input
           type="text"
           required
           value={account}
           onChange={(e) => setAcc(e.target.value)}
-          placeholder="請輸入帳號"
+          placeholder="請輸入電子郵件"
           autoComplete="username"
         />
       </Field>
+
+      <Field>
+        <label>使用者名稱</label>
+        <input
+          type="text"
+          required
+          value={userName}
+          onChange={(e) => setUserName(e.target.value)}
+          placeholder="請輸入使用者名稱"
+        />
+      </Field>
+
       <Field>
         <label>密碼</label>
         <input
@@ -183,6 +217,7 @@ function SignupForm({ onDone }: { onDone: () => void }) {
           autoComplete="new-password"
         />
       </Field>
+
       <Field>
         <label>確認密碼</label>
         <input
@@ -194,12 +229,19 @@ function SignupForm({ onDone }: { onDone: () => void }) {
           autoComplete="new-password"
         />
       </Field>
+
       <Field>
         <label>角色</label>
-        <RoleDropdown value={role} onChange={(v) => setRole(v as Role)} />
+        <select
+          value={role}
+          onChange={(e) => setRole(e.target.value as BackendUserType)}
+        >
+          <option value="shop">茶行</option>
+          <option value="customer">消費者</option>
+        </select>
       </Field>
 
-      {role === "Farmer" && (
+      {role === "shop" && (
         <Field>
           <label>茶行名稱</label>
           <input

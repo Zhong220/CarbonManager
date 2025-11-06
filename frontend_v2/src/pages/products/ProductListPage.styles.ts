@@ -1,3 +1,4 @@
+// frontend_v2\src\pages\products\ProductListPage.styles.ts
 import styled from "styled-components";
 
 export const PageWrapper = styled.div`

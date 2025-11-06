@@ -1,49 +1,50 @@
+// src/ui/components/AccountMenu.tsx
 import React, { useRef, useState } from "react";
 import DropdownMenu from "@/ui/components/DropdownMenu";
 import { WhiteButton } from "@/ui/primitives/Button";
 import { useNavigate } from "react-router-dom";
 
-import { useUser } from "@/context/UserContext"; // ✅ 用 Context
+import { useUser } from "@/context/UserContext"; // ✅ Use Context first
 import {
   getAccount as getAccountFromStorage,
-  deleteAccount as deleteAccountFromStorage,
+  deleteAccountCompletely as deleteAccountFromStorage, // ✅ renamed in new storage.ts
   hardAppReset as hardAppResetStorage,
-  softLogout as softLogoutStorage, // 備援用
+  softLogout as softLogoutStorage, // fallback only
 } from "@/utils/storage";
 
 /**
- * 帳號選單（右上角 ☰）
- * - 登出：清除登入狀態並強制回到歡迎頁
- * - 刪除帳號：二次確認後刪除資料並強制回到歡迎頁
+ * Account menu (top-right ☰)
+ * - Logout: clear auth state and force return to welcome page
+ * - Delete account: double confirm, then wipe local data and force return to welcome page
  */
 export default function AccountMenu() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
-  // ✅ 以 Context 為主（確保全站 state 一致）
+  // ✅ Prefer Context (keeps global app state in sync)
   const { account, logout, removeMyAccount } = useUser();
   const fallbackAcc = getAccountFromStorage();
   const acc = account ?? fallbackAcc ?? "";
 
-  /** 登出：優先呼叫 Context，最後用硬導向確保回首頁 */
+  /** Logout: prefer Context, fallback to local-only; always hard-redirect home */
   const handleLogout = async () => {
     try {
       if (logout) {
-        await Promise.resolve(logout());        // 清空 Context + localStorage
+        await Promise.resolve(logout()); // clear Context + storage token
       } else {
-        softLogoutStorage();                    // 備援：只清本機
+        softLogoutStorage(); // fallback: local only
       }
     } finally {
       setOpen(false);
-      // ✅ 用硬導向確保重新 mount（避免 Router 沒重繪）
+      // Hard redirect to ensure a clean remount (avoids stale router state)
       window.location.replace("/");
-      // 若你想保留單頁跳轉，也可用：
+      // If you prefer SPA navigation, you can use:
       // navigate("/", { replace: true });
     }
   };
 
-  /** 刪除帳號：二次確認，刪除後強制回首頁 */
+  /** Delete account: double-confirm, then wipe, then hard-redirect home */
   const handleDelete = async () => {
     if (!acc) return;
     const ok1 = confirm("確定要刪除此帳號嗎？此動作將刪除此帳號底下的商店、商品、紀錄與分類，無法復原。");
@@ -55,7 +56,7 @@ export default function AccountMenu() {
       if (removeMyAccount) {
         await Promise.resolve(removeMyAccount());
       } else {
-        // 備援路徑：直接刪本機資料
+        // Fallback path: wipe local data
         deleteAccountFromStorage(acc);
         hardAppResetStorage?.();
       }
@@ -65,7 +66,7 @@ export default function AccountMenu() {
       softLogoutStorage();
     } finally {
       setOpen(false);
-      window.location.replace("/"); // ✅ 強制回歡迎頁
+      window.location.replace("/"); // Force return to welcome page
     }
   };
 

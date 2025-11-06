@@ -55,6 +55,14 @@ services:
       # - ./scripts:/app/scripts
     command: ["python", "run.py"]
     restart: unless-stopped
+  frontend:
+      build:
+        context: ./frontend_v2
+      container_name: carbon-frontend
+      depends_on:
+        - backend   # 如果現在有啟 backend，保留；沒有也無所謂
+      ports:
+        - "8080:80" # 前端入口 http://127.0.0.1:8080
 
 volumes:
   mysql_data:
