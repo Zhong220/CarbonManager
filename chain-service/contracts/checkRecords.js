@@ -1,9 +1,16 @@
 import { ethers } from "ethers";
 import fs from "fs";
+import path, { dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const abiPath = path.join(__dirname,"../contracts/RecordStorage.json");
+const abiJson = JSON.parse(fs.readFileSync(abiPath, "utf8"));
 
 const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
-const abi = JSON.parse(fs.readFileSync("./RecordStorage.json")).abi;
-const contract = new ethers.Contract("0x7651dDBf08043a3af8b4603F8EBB90733247BFa9", abi, provider);
+
+const contract = new ethers.Contract("0x7651dDBf08043a3af8b4603F8EBB90733247BFa9", abiJson.abi, provider);
 
 // Search and print all records
 try {
