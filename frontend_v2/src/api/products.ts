@@ -1,88 +1,114 @@
-// ===============================================================
 // src/api/products.ts
-// 對齊後端 routes/products.py（被掛在 /product_types/<type_id> 底下）
-// - GET  /product_types/:typeId/products → { products: [...] }
-// - POST /product_types/:typeId/products {name, serial_number?, code?} → 201
-// - GET  /product_types/:typeId/products/:id → 直接回 product 物件
-// - PUT  /product_types/:typeId/products/:id → 需要帶 name（其餘可沿用舊值）
-// - DELETE 同路徑 → 200
-// ===============================================================
 import { http } from "./http";
 
-export interface BackendProduct {
-  id: number;
-  organization_id: number;
-  type_id: number;
-  name: string;
-  serial_number: number | null;
-  total_emission?: number;
-  created_at?: string;
-  ended_at?: string | null;
-  code?: string | null;
-}
-
+/** 前端使用的產品資料形狀（簡化且穩定） */
 export interface UIProduct {
   id: number;
   name: string;
-  serialNumber: number | null;
-  typeId: number;
-  organizationId: number;
-  code?: string | null;
+  serialNumber?: number | null;
+  // 之後要擴充再加
 }
 
-function toUI(p: BackendProduct): UIProduct {
+/** ----------- 小工具：把各種回傳長相標準化 ----------- */
+function normalizeList<T = any>(res: any): T[] {
+  if (!res) return [];
+  if (Array.isArray(res)) return res as T[];
+  if (Array.isArray(res.items)) return res.items as T[];
+  if (Array.isArray(res.data)) return res.data as T[];
+  if (Array.isArray(res.list)) return res.list as T[];
+  if (Array.isArray(res.products)) return res.products as T[];
+  // map 物件：{ "1": {...}, "2": {...} }
+  if (typeof res === "object") {
+    const vals = Object.values(res);
+    if (vals.length && typeof vals[0] === "object" && "id" in (vals[0] as any)) {
+      return vals as T[];
+    }
+  }
+  return [];
+}
+
+function normalizeOne<T = any>(res: any): T {
+  if (!res) throw new Error("Empty response");
+  if (res.id) return res as T;
+  if (res.product?.id) return res.product as T;
+  if (res.data?.id) return res.data as T;
+  return res as T;
+}
+
+/** 後端欄位 → UI 欄位 */
+function toUIProduct(x: any): UIProduct {
+  const src = normalizeOne<any>(x);
+  const id = Number(src.id ?? src.product_id ?? src.pid);
+  const name =
+    String(
+      src.name ??
+        src.product_name ??
+        src.title ??
+        src.display_name ??
+        ""
+    ) || `#${id}`;
+
+  const serial =
+    src.serialNumber ??
+    src.serial_no ??
+    src.serial_no_id ??
+    src.serial ??
+    null;
+
   return {
-    id: p.id,
-    name: p.name,
-    serialNumber: p.serial_number ?? null,
-    typeId: p.type_id,
-    organizationId: p.organization_id,
-    code: p.code ?? null,
+    id: Number.isFinite(id) ? id : 0,
+    name,
+    serialNumber: serial != null ? Number(serial) : null,
   };
 }
 
+/** 陣列 → UI 陣列 */
+function toUIList(res: any): UIProduct[] {
+  return normalizeList<any>(res).map(toUIProduct);
+}
+
+/** =========================================================
+ *  REST 對齊後端：/api/product_types/:typeId/products
+ * ======================================================= */
+
+/** 依產品類型列出產品 */
 export async function apiListProducts(typeId: number): Promise<UIProduct[]> {
-  const res = await http.get<{ products: BackendProduct[] }>(
-    `/api/product_types/${typeId}/products`
-  );
-  const list = Array.isArray(res?.products) ? res.products : [];
-  return list.map(toUI);
+  const raw = await http.get<any>(`/api/product_types/${typeId}/products`);
+  return toUIList(raw);
 }
 
-export async function apiGetProduct(typeId: number, productId: number): Promise<UIProduct> {
-  const p = await http.get<BackendProduct>(`/api/product_types/${typeId}/products/${productId}`);
-  return toUI(p);
-}
-
+/** 新增產品（同名衝突由後端決定 409；這裡只拋錯讓 UI 顯示） */
 export async function apiCreateProduct(
   typeId: number,
-  payload: { name: string; serial_number?: number | null; code?: string | null }
-): Promise<void> {
-  await http.post(`/api/product_types/${typeId}/products`, payload);
+  body: { name: string }
+): Promise<UIProduct> {
+  const raw = await http.post<any>(`/api/product_types/${typeId}/products`, body);
+  return toUIProduct(raw);
 }
 
+/** 讀單一產品 */
+export async function apiGetProduct(
+  typeId: number,
+  productId: number
+): Promise<UIProduct> {
+  const raw = await http.get<any>(`/api/product_types/${typeId}/products/${productId}`);
+  return toUIProduct(raw);
+}
+
+/** 更新產品 */
 export async function apiUpdateProduct(
   typeId: number,
   productId: number,
-  patch: { name?: string; serial_number?: number | null; code?: string | null }
+  body: { name?: string }
+): Promise<UIProduct> {
+  const raw = await http.put<any>(`/api/product_types/${typeId}/products/${productId}`, body);
+  return toUIProduct(raw);
+}
+
+/** 刪除產品 */
+export async function apiDeleteProduct(
+  typeId: number,
+  productId: number
 ): Promise<void> {
-  // 後端 update 需要多欄，穩健作法：先抓舊值，再補上 patch
-  const current = await apiGetProduct(typeId, productId);
-  await http.put(`/api/product_types/${typeId}/products/${productId}`, {
-    organization_id: current.organizationId,
-    type_id: typeId,
-    name: patch.name ?? current.name,
-    serial_number: patch.serial_number ?? current.serialNumber,
-    code: patch.code ?? current.code ?? null,
-  });
-}
-
-export async function apiDeleteProduct(typeId: number, productId: number): Promise<void> {
   await http.delete(`/api/product_types/${typeId}/products/${productId}`);
-}
-
-/** 取得「所有類型」的商品：會先列出所有類型，再分批抓產品合併 */
-export async function apiListAllProducts(typeIds: number[]): Promise<UIProduct[]> {
-  const chunks = await Promise.all(typeIds.map((tid) => apiListProducts(tid)));
-  return chunks.flat();
 }
