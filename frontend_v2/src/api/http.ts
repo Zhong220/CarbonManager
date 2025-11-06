@@ -1,13 +1,19 @@
+// ====================================================================
+// HTTP client (fetch wrapper)
+// - Reads base URL from VITE_API_BASE
+// - Automatically adds Bearer token from localStorage or override
+// - Unified error handling and JSON parsing
+// ====================================================================
 let baseURL = (import.meta.env.VITE_API_BASE as string) ?? "";
 let overrideAuthToken: string | null = null;
 let onUnauthorized: (() => void) | null = null;
 
-/** 規範化 baseURL（移除結尾 /） */
+// Remove trailing slashes from base URL
 function normalizeBase(url: string) {
   return (url || "").replace(/\/+$/, "");
 }
 
-/** 取得本地 token：override > localStorage(access_token) > localStorage(token) */
+// Pick token: override > localStorage(access_token) > localStorage(token)
 function pickToken(): string | null {
   return (
     overrideAuthToken ??
@@ -17,22 +23,22 @@ function pickToken(): string | null {
   );
 }
 
-/** 改 baseURL（通常不需要動，.env 會注入） */
+// Optional: set base URL (normally not needed; .env controls it)
 export function setBaseURL(url: string) {
   baseURL = normalizeBase(url);
 }
 
-/** 可選：手動覆蓋 token（一般不用） */
+// Optional: override token (rarely needed)
 export function setAuthToken(token: string | null) {
   overrideAuthToken = token || null;
 }
 
-/** 可選：註冊 401 回呼（例如在 UserContext 裡清狀態） */
+// Optional: register a 401 callback (e.g., clear user state)
 export function setOnUnauthorized(handler: (() => void) | null) {
   onUnauthorized = handler;
 }
 
-/** 內部請求核心（已預設 CORS，且不帶 credentials） */
+// Core request helper (CORS by default, no credentials)
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isAbsolute = /^https?:\/\//i.test(path);
   const base = normalizeBase(baseURL || "");
@@ -42,16 +48,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...(init.headers as any),
   };
 
+  // Default headers (skip when using FormData)
   const isForm = init.body instanceof FormData;
   if (!isForm && init.body && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
   if (!headers["Accept"]) headers["Accept"] = "application/json, text/plain, */*";
 
+  // Auto add Authorization header if not provided
   const token = pickToken();
-  const hasAuthHeader = Object.keys(headers).some(k => k.toLowerCase() === 'authorization');
+  const hasAuthHeader = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
   if (token && !hasAuthHeader) {
-    headers['Authorization'] = `Bearer ${token}`;
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const reqInit: RequestInit = {
@@ -69,10 +77,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new Error(`[fetch] Failed to fetch ${url} - ${m}`);
   }
 
+  // Notify caller on 401 (e.g., to clear tokens/UI)
   if (res.status === 401 && onUnauthorized) {
-    try { onUnauthorized(); } catch {}
+    try {
+      onUnauthorized();
+    } catch {}
   }
 
+  // Normalize non-2xx errors (try to extract server message)
   if (!res.ok) {
     let msg = `HTTP ${res.status} ${res.statusText}`;
     const ctErr = res.headers.get("content-type") || "";
@@ -92,10 +104,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new Error(msg);
   }
 
+  // No content
   if (res.status === 204 || res.status === 205) {
     return undefined as unknown as T;
   }
 
+  // Auto parse JSON; otherwise return text
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
     return (await res.json()) as T;
@@ -103,7 +117,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.text()) as T;
 }
 
-/** 序列化物件為 querystring（扁平鍵） */
+// Serialize simple object into query string (?k=v&...)
 function toQuery(q?: Record<string, any>) {
   if (!q || !Object.keys(q).length) return "";
   const usp = new URLSearchParams();
@@ -115,6 +129,7 @@ function toQuery(q?: Record<string, any>) {
   return s ? `?${s}` : "";
 }
 
+// Public client API
 export const http = {
   get: <T>(path: string, query?: Record<string, any>, init?: RequestInit) =>
     request<T>(`${path}${toQuery(query)}`, { method: "GET", ...(init || {}) }),
@@ -133,14 +148,19 @@ export const http = {
       ...(init || {}),
     }),
 
-  del:   <T>(path: string, init?: RequestInit) => request<T>(path, { method: "DELETE", ...(init || {}) }),
-  delete:<T>(path: string, init?: RequestInit) => request<T>(path, { method: "DELETE", ...(init || {}) }),
+  del: <T>(path: string, init?: RequestInit) =>
+    request<T>(path, { method: "DELETE", ...(init || {}) }),
+
+  delete: <T>(path: string, init?: RequestInit) =>
+    request<T>(path, { method: "DELETE", ...(init || {}) }),
 
   setBaseURL,
   setAuthToken,
   setOnUnauthorized,
-  get baseURL() { return baseURL; },
+  get baseURL() {
+    return baseURL;
+  },
 };
 
-// 初始化一次 baseURL（處理尾端 /）
+// Initialize base URL once
 setBaseURL(baseURL || "");

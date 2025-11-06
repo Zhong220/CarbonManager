@@ -1,4 +1,8 @@
-// src/api/productTypes.ts
+// ====================================================================
+// Product Types API bindings
+// - List, create, and ensure a default type exists
+// - Normalizes varying backend shapes into ProductType
+// ====================================================================
 import { http } from "./http";
 
 export interface ProductType {
@@ -14,7 +18,7 @@ export interface CreateProductTypeInput {
   name: string;
 }
 
-/** 把各種形狀標準化成陣列 */
+// Normalize list-like responses to an array
 function normalizeList<T = any>(res: any): T[] {
   if (!res) return [];
   if (Array.isArray(res)) return res as T[];
@@ -32,7 +36,7 @@ function normalizeList<T = any>(res: any): T[] {
   return [];
 }
 
-/** 取出單筆（處理包裹） */
+// Normalize single type (handles wrappers)
 function normalizeType(res: any): ProductType {
   if (!res) throw new Error("Empty response");
   if (res.id) return res as ProductType;
@@ -41,19 +45,19 @@ function normalizeType(res: any): ProductType {
   return res as ProductType;
 }
 
-/** 依名稱（不分大小寫）在清單中尋找 */
+// Find by name (case-insensitive)
 function findByName(list: ProductType[], name: string): ProductType | undefined {
   const target = name.trim().toLowerCase();
   return list.find((t) => (t.name || "").trim().toLowerCase() === target);
 }
 
-/** 取清單 */
+// GET /api/product_types
 export async function apiListProductTypes(): Promise<ProductType[]> {
   const raw = await http.get<any>("/api/product_types");
   return normalizeList<ProductType>(raw);
 }
 
-/** 新增（409 時回頭用既有那一筆，不丟錯） */
+// POST /api/product_types (fallback to existing on 409)
 export async function apiCreateProductType(
   body: CreateProductTypeInput
 ): Promise<ProductType> {
@@ -71,7 +75,7 @@ export async function apiCreateProductType(
   }
 }
 
-/** 取得或建立 Default Type（不依賴 /default 路由） */
+// Ensure a default-like type exists (no reliance on /default)
 export async function apiGetOrCreateDefaultType(): Promise<ProductType> {
   const list = await apiListProductTypes();
   const defaultLike =
