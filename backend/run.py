@@ -8,7 +8,7 @@ from flask_jwt_extended import JWTManager
 from routes.auth import auth_bp
 from routes.onchain import onchain_bp
 from routes.product_types import product_types_bp
-
+from routes.factor import factor_bp
 # Load environment variables
 load_dotenv()
 
@@ -25,7 +25,7 @@ def create_app(config_class=Config):
     app.register_blueprint(onchain_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(product_types_bp)
-
+    app.register_blueprint(factor_bp)
     # --------- Swagger ---------
     @app.route("/openapi.yaml")  # Serve raw OpenAPI file
     def openapi_yaml():
