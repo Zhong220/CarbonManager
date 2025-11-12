@@ -3,19 +3,6 @@ import json
 from typing import Optional 
 from db_connection import get_db
 
-##################################### emissions_onchain ###########################
-# +--------------+--------------------------------------------------+------+-----+-------------------+-----------------------------------------------+
-# | Field        | Type                                             | Null | Key | Default           | Extra                                         |
-# +--------------+--------------------------------------------------+------+-----+-------------------+-----------------------------------------------+
-# | id           | bigint unsigned                                  | NO   | PRI | NULL              | auto_increment                                |
-# | emission_id  | bigint unsigned                                  | NO   | UNI | NULL              |                                               |
-# | status       | enum('pending','submitted','confirmed','failed')  | NO   | MUL | pending           |                                               |
-# | tx_hash      | varchar(66)                                      | YES  | UNI | NULL              |                                               |
-# | error_msg    | varchar(500)                                     | YES  |     | NULL              |                                               |
-# | created_at   | timestamp                                        | NO   |     | CURRENT_TIMESTAMP | DEFAULT_GENERATED                             |
-# | updated_at   | timestamp                                        | NO   | MUL | CURRENT_TIMESTAMP | DEFAULT_GENERATED on update CURRENT_TIMESTAMP |
-# +--------------+--------------------------------------------------+------+-----+-------------------+-----------------------------------------------+
-
 def fetch_emission(emission_id: int): 
     sql = """
         SELECT 

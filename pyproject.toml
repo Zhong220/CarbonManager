@@ -1,8 +1,0 @@
-[tool.ruff]
-line-length = 150
-target-version = "py311"
-extend-exclude = [".venv","venv","__pycache__","migrations"]
-
-[tool.ruff.lint]
-select = ["E","F","I","B"]     # drop "W"
-ignore = ["E203"]              # no need for W503

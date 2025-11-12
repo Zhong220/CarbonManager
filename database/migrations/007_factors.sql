@@ -1,21 +1,6 @@
 -- 007_factors.sql
 -- Modify the 'factors' table
 
--- Current schema of 'factors' table:
--- +----------------+-----------------+------+-----+-------------------+-------------------+
--- | Field          | Type            | Null | Key | Default           | Extra             |
--- +----------------+-----------------+------+-----+-------------------+-------------------+
--- | id             | bigint unsigned | NO   | PRI | NULL              | auto_increment    |
--- | name           | varchar(200)    | NO   |     | NULL              |                   |
--- | unit           | varchar(50)     | YES  |     | NULL              |                   |
--- | value_per_unit | double          | YES  |     | NULL              |                   |
--- | category       | varchar(100)    | YES  |     | NULL              |                   |
--- | region         | varchar(100)    | YES  |     | NULL              |                   |
--- | source         | varchar(255)    | YES  |     | NULL              |                   |
--- | created_at     | timestamp       | NO   |     | CURRENT_TIMESTAMP | DEFAULT_GENERATED |
--- | usage_count    | int             | NO   |     | 0                 |                   |
--- +----------------+-----------------+------+-----+-------------------+-------------------+
-
 -- New schema of 'factors' table:
 -- +-------------------+-----------------+------+-----+-------------------+-------------------+
 -- | Field             | Type            | Null | Key | Default           | Extra             |
@@ -31,8 +16,11 @@
 -- | source            | varchar(255)    | NO   |     | NULL              |                   |
 -- +-------------------+-----------------+------+-----+-------------------+-------------------+
 
+-- 1. Remove constraint 
+ALTER TABLE emissions
+    DROP FOREIGN KEY fk_em_factor;
 
-
+-- 2. Drop and recreate the 'factors' table with the new schema
 DROP TABLE IF EXISTS factors;
 
 CREATE TABLE factors (
@@ -47,3 +35,8 @@ CREATE TABLE factors (
     source VARCHAR(255) NOT NULL
 );
 
+-- 3. Re-add foreign key constraint
+ALTER TABLE emissions
+    ADD CONSTRAINT fk_em_factor
+    FOREIGN KEY (factor_id) REFERENCES factors(id)
+    ON DELETE CASCADE ON UPDATE CASCADE;

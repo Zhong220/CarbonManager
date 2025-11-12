@@ -11,8 +11,6 @@ from models.organizations_model import (
     create_organization,
     get_organization_by_name,
 )
-
-# from werkzeug.security import generate_password_hash, check_password_hash
 from models.user_model import (
     create_user,
     generate_tokens,
@@ -22,10 +20,10 @@ from models.user_model import (
     delete_user,
 )
 
-auth_bp = Blueprint("auth", __name__, url_prefix="/auth")  # all routes start with /auth
+auth_bp = Blueprint("auth", __name__, url_prefix="/auth") 
 
 
-# -------- REGISTER --------
+# -------- Register --------
 @auth_bp.post("/register")
 def register():
     data = request.get_json(force=True)
@@ -74,8 +72,7 @@ def register():
         201,
     )
 
-
-# -------- LOGIN --------
+# -------- Login --------
 @auth_bp.post("/login")
 def login():
     data = request.get_json(force=True)
@@ -110,12 +107,10 @@ def login():
         200,
     )
 
-
-# -------- REFRESH: new access token --------
+# -------- New access token --------
 @auth_bp.post("/refresh")
 @jwt_required(refresh=True)
 def refresh():
-    # identity should be the numeric user_id
     user_id = get_jwt_identity()
     claims = get_jwt()
     account = claims.get("account")
@@ -127,7 +122,6 @@ def refresh():
     )
     return jsonify(access_token=new_access), 200
 
-
 # -------- ME: see the current logged in user --------
 @auth_bp.get("/me")
 @jwt_required()
@@ -138,7 +132,6 @@ def me():
         return jsonify(error="user not found"), 404
     user.pop("password_hash", None)
     return jsonify(user), 200
-
 
 # ------- ME: Update user info -------
 @auth_bp.put("/me")
@@ -160,9 +153,7 @@ def update_me():
         assign_user_to_org(user_id, org["id"])
     return jsonify(message="user updated"), 200
 
-
-
-#-------- DELETE ME --------
+#-------- ME: DELETE ME --------
 @auth_bp.delete("/me")
 @jwt_required()
 def delete_me():

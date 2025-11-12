@@ -1,7 +1,5 @@
 # backend/models/product_types_model.py
 from __future__ import annotations
-
-# from werkzeug.security import generate_password_hash, check_password_hash
 from db_connection import get_db
 
 

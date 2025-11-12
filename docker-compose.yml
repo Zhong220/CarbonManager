@@ -56,7 +56,6 @@ services:
       - "5001:5000"
     volumes:
       - ./backend:/app
-      # - ./scripts:/app/scripts
     command: ["python", "run.py"]
     restart: unless-stopped
     networks:
@@ -77,7 +76,6 @@ services:
     networks:
       - shared-net
       - carbonmanager_net
-
 volumes:
   mysql_data:
 
