@@ -17,8 +17,8 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
 SET @u_shop := LAST_INSERT_ID();
 
 -- product type
-INSERT INTO product_types (organization_id, name)
-VALUES (@org, 'DemoType')
+INSERT INTO product_types (organization_id, name, order_id)
+VALUES (@org, 'DemoType', 1 )
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
 SET @ptype := LAST_INSERT_ID();
 
@@ -28,31 +28,12 @@ VALUES (@org, @ptype, 'Demo Product', 'DEMO-001')
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
 SET @prod := LAST_INSERT_ID();
 
--- stages (ensure two basic ones exist)
-INSERT INTO emission_stages (name) VALUES ('Production')
-ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
-SET @st_prod := (SELECT id FROM emission_stages WHERE name='Production' LIMIT 1);
-
-INSERT INTO emission_stages (name) VALUES ('Transport')
-ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
-SET @st_trans := (SELECT id FROM emission_stages WHERE name='Transport' LIMIT 1);
-
--- factors (simple reference rows)
-INSERT INTO factors (name, unit, value_per_unit, category, region, source, usage_count)
-VALUES ('Electricity (demo)', 'kWh', 0.5, 'Energy', 'TW', 'seed', 0)
-ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
-SET @f_elec := LAST_INSERT_ID();
-
-INSERT INTO factors (name, unit, value_per_unit, category, region, source, usage_count)
-VALUES ('Diesel (demo)', 'L', 2.6, 'Fuel', 'GLOBAL', 'seed', 0)
-ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
-SET @f_diesel := LAST_INSERT_ID();
 
 -- ONE emission (the one you’ll send on-chain)
 -- Note: tag_id NULL is fine; sort_order = 1
 INSERT IGNORE INTO emissions
-  (name, product_id, stage_id, factor_id, tag_id, created_by, sort_order, quantity, emission_amount)
+  (name, product_id, stage_id, factor_id, tag_id, created_by,  quantity, emission_amount)
 VALUES
-  ('Seed Emission', @prod, @st_prod, @f_elec, NULL, @u_shop, 1, 42, NULL);
+  ('Seed Emission', @prod, @st_prod, @f_elec, NULL, @u_shop, 42, NULL);
 
 SET FOREIGN_KEY_CHECKS = 1;

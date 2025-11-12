@@ -131,10 +131,16 @@ show-tables: ## List tables
 	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "SHOW TABLES;"
 
+show-create-%: ## Show full DDL (table definition), including all constraints of table (Replace % with table name: make show-create-table)
+	docker compose exec $(DB_SVC) \
+	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
+	  -e "SHOW CREATE TABLE $*;"
+
 desc-%: ## Show schema of table (Replace % with table name: make desc-table)
 	docker compose exec $(DB_SVC) \
 	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  -e "DESC $*;"
+
 
 
 
@@ -144,15 +150,23 @@ test: ## Test backend endpoints (/health)
 
 
 
-seed: ## Apply minimal seed file into DB
+seed-dev: ## Apply minimal seed file into DB
 	docker compose exec -T $(DB_SVC) \
 	  mysql -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
 	  < database/seeds/dev_seed.sql
 
-show-seed-emission: ## Show seed emission(s)
-	docker compose exec $(DB_SVC) \
-	  mysql -N -u $$MYSQL_USER -p$$MYSQL_PASSWORD -D $$MYSQL_DATABASE \
-	  -e "SELECT id, name, product_id, stage_id FROM emissions ORDER BY id DESC LIMIT 5;"
+seed-factors:
+	@echo "🌱 Seeding emission factors into DB..."
+	docker compose exec backend sh -c "cd /app && python -m store_factors.seed_factors"
+
+seed-tags: ## Seed tags into DB
+	@echo "🌱 Seeding tags..."
+	docker compose exec backend sh -c "cd /app && python -m store_tags.seed_tags"
+
+seed: ## Seed dev data into DB
+	$(MAKE) seed-dev
+	$(MAKE) seed-factors
+	$(MAKE) seed-tags
 
 # # ========== CI Backend ==========
 

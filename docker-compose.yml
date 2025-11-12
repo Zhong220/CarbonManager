@@ -52,8 +52,21 @@ services:
       - "5001:5000"
     volumes:
       - ./backend:/app
-      # - ./scripts:/app/scripts
     command: ["python", "run.py"]
+    restart: unless-stopped
+  
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173" 
+    volumes:
+      - .:/app 
+      - /app/node_modules 
+    environment:
+      - VITE_HOST=0.0.0.0
+    command: ["npm", "run", "dev"]
     restart: unless-stopped
 
 volumes:

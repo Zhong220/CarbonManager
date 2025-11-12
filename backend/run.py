@@ -8,7 +8,9 @@ from flask_jwt_extended import JWTManager
 from routes.auth import auth_bp
 from routes.onchain import onchain_bp
 from routes.product_types import product_types_bp
+from routes.products import product_bp
 from routes.factor import factor_bp
+from routes.emissions import emission_bp
 # Load environment variables
 load_dotenv()
 
@@ -25,7 +27,10 @@ def create_app(config_class=Config):
     app.register_blueprint(onchain_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(product_types_bp)
+    app.register_blueprint(product_bp)
     app.register_blueprint(factor_bp)
+    app.register_blueprint(emission_bp) 
+    
     # --------- Swagger ---------
     @app.route("/openapi.yaml")  # Serve raw OpenAPI file
     def openapi_yaml():
@@ -55,7 +60,17 @@ def create_app(config_class=Config):
     @app.route("/health")  # Health check route
     def health():
         return jsonify(ok=True), 200
-
+    @app.route("/_routes")
+    def list_routes():
+        routes = []
+        for rule in app.url_map.iter_rules():
+            routes.append({
+                "endpoint": rule.endpoint,
+                "methods": list(rule.methods),
+                "rule": str(rule)
+            })
+        return jsonify(routes)
+        
     return app
 
 

@@ -2,6 +2,13 @@
 from db_connection import get_db
 from mysql.connector import Error
 
+def get_factor(factor_id):
+    with get_db() as conn:
+        cursor = conn.cursor(dictionary=True)
+        sql = "SELECT * FROM factors WHERE id = %s"
+        cursor.execute(sql, (factor_id,))
+    return cursor.fetchone()
+
 def search_factors(
     q=None,
     category=None,
@@ -56,4 +63,4 @@ def search_factors(
         params.extend([limit, offset])
 
         cursor.execute(sql, tuple(params))
-        return cursor.fetchall()
+    return cursor.fetchall()

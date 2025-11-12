@@ -8,16 +8,14 @@ from models.product_types_model import (
     list_product_types,
     modify_product_type,
 )
-
-# from werkzeug.security import generate_password_hash, check_password_hash
 from models.user_model import get_user_organization
 from mysql.connector.errors import IntegrityError
-from routes.products import products_bp 
+from routes.products import product_types_products_bp 
 
 product_types_bp = Blueprint("product_types", __name__, url_prefix="/product_types")  
-product_types_bp.register_blueprint(products_bp, url_prefix="/<int:type_id>") # Link Products routes
+product_types_bp.register_blueprint(product_types_products_bp, url_prefix="/<int:type_id>") 
 
-# -------------- Helper Functions --------------
+# -------------- Helpers --------------
 def _is_shop(claims: dict) -> bool:
     return (claims.get("user_type") or "").lower() == "shop"
 
@@ -30,7 +28,7 @@ def _validate_name(name: str) -> str | None:
     return None
 
 
-# -------- POST: CREATE PRODUCT TYPE --------
+# -------- All: Create product type --------
 @product_types_bp.post("")
 @jwt_required()
 def add_type():
@@ -54,7 +52,7 @@ def add_type():
         return jsonify(error="Error creating product type", details=str(e)), 500
 
 
-# -------- LIST PRODUCT TYPES --------
+# -------- All: List product types --------
 @product_types_bp.get("")
 @jwt_required()
 def list_all():
@@ -70,8 +68,7 @@ def list_all():
     except Exception as e:
         return jsonify(msg="Error fetching product types", error=str(e)), 500
 
-
-# -- ------ MODIFY A PRODUCT --------
+# -------- By id: Update a product type --------
 @product_types_bp.put("/<int:product_type_id>")
 @jwt_required()
 def update_pt(product_type_id):
@@ -94,7 +91,7 @@ def update_pt(product_type_id):
         return jsonify(msg="Error updating product type", error=str(e)), 500
 
 
-# -------------- DELETE A PRODUCT TYPE
+# -------- By id: Delete a product type --------
 @product_types_bp.delete("/<int:product_type_id>")
 @jwt_required()
 def delete_pt(product_type_id):
@@ -122,7 +119,7 @@ def delete_pt(product_type_id):
         return jsonify(status_message="Error deleting product type", error=str(e)), 500
 
 
-# ---------------- GET A PRODUCT TYPE BY ID
+# -------- By id: Get a product type ----------
 @product_types_bp.get("/<int:product_type_id>")
 @jwt_required()
 def get_pt(product_type_id):
