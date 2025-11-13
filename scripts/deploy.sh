@@ -13,7 +13,15 @@ set -euo pipefail
 
 # -------- Config -------- #
 
-PROJECT_NAME="${PROJECT_NAME:-carbon-manager}"
+PROJECT="${PROJECT:-carbonmanager}"
+
+DB_SVC="${DB_SVC:-db}"
+MIGRATOR_SVC="${MIGRATOR_SVC:-migrator}"
+BACKEND_SVC="${BACKEND_SVC:-backend}"
+CHAIN_SVC="${CHAIN_SVC:-chain-service}"
+
+URL="${URL:-http://127.0.0.1:5001}"
+CHAIN_URL="${CHAIN_URL:-http://127.0.0.1:3001}"
 
 # Auto-detect compose file if not given
 if [ -z "${COMPOSE_FILE:-}" ]; then
@@ -64,7 +72,7 @@ load_env() {
 }
 
 dc() {
-  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT" "$@"
 }
 
 # -------- Actions -------- #
@@ -95,7 +103,7 @@ action_run_migrations() {
 
 action_start_app() {
   log "Starting / restarting app services…"
-  dc up -d backend frontend
+  dc up -d backend # frontend
 }
 
 action_show_status() {
@@ -145,7 +153,7 @@ main() {
 
   local cmd="${1:-full}"
 
-  log "Project:      $PROJECT_NAME"
+  log "Project:      $PROJECT"
   log "Compose file: $COMPOSE_FILE"
   log "Env file:     ${ENV_FILE:-<none>}"
   log "Mode:         $cmd"

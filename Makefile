@@ -82,7 +82,7 @@ db-desc-%: ## Show schema of table (Replace % with table name)
 
 # ========== Migrator ==========
 migrate: ## Apply all pending migrations
-	bash scripts/migrate.sh
+	bash scripts/deploy.sh migrate
 
 migrations: ## Show applied migrations in schema_migrations table
 	docker compose exec $(DB_SVC) \
