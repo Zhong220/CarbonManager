@@ -91,10 +91,6 @@ action_build_images() {
   dc build
 }
 
-action_start_db() {
-  log "Starting database service…"
-  dc up -d db
-}
 
 action_run_migrations() {
   log "Running migrations via 'migrator' service…"
@@ -124,7 +120,6 @@ do_full() {
   load_env
   action_git_pull
   action_build_images
-  action_start_db
   action_run_migrations
   action_start_app
   action_show_status
