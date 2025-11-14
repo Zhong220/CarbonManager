@@ -1545,3 +1545,15 @@ export function purgeStrayTargetsAndLegacyBatches(opts?: { includeDefault?: bool
 export function getStepOrderPayload(stages: { id: string; steps: { id: string }[] }[]) {
   return stages.map((s) => ({ stageId: s.id, order: s.steps.map((step) => step.id) }));
 }
+
+export const kv = {
+  get(key: string) {
+    return (storage as any).getItem(key);
+  },
+  set(key: string, val: string) {
+    (storage as any).setItem(key, val);
+  },
+  remove(key: string) {
+    (storage as any).removeItem(key);
+  },
+};
