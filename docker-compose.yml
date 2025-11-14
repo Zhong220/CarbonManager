@@ -18,6 +18,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - carbonmanager_net
 
   migrator:
     build:
@@ -36,6 +38,8 @@ services:
     volumes:
       - ./database:/app/database
     restart: "no"
+    networks:
+      - carbonmanager_net
 
   backend:
     build: 
@@ -52,18 +56,33 @@ services:
       - "5001:5000"
     volumes:
       - ./backend:/app
-      # - ./scripts:/app/scripts
     command: ["python", "run.py"]
     restart: unless-stopped
-  frontend:
-      build:
-        context: ./frontend_v2
-      container_name: carbon-frontend
-      depends_on:
-        - backend   # 如果現在有啟 backend，保留；沒有也無所謂
-      ports:
-        - "8080:80" # 前端入口 http://127.0.0.1:8080
+    networks:
+      - carbonmanager_net
 
+  chain-service:
+    build:
+      context: ./chain-service
+      dockerfile: Dockerfile
+    container_name: carbon-chain
+    env_file: ./chain-service/.env
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./chain-service/src:/app/src
+    command: ["npm","start"]
+    restart: unless-stopped
+    networks:
+      - shared-net
+      - carbonmanager_net
 volumes:
   mysql_data:
+
+networks:
+  shared-net:
+    external: true
+  carbonmanager_net:
+    name: carbonmanager_net
+    driver: bridge
 

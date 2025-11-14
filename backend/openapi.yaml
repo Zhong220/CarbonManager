@@ -256,6 +256,24 @@ paths:
           description: Invalid input
         "401":
           description: Unauthorized
+    delete:
+      summary: Delete current logged-in user
+      tags: [Authorization]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: User deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status_message:
+                    type: string
+        "401":
+          description: Unauthorized
+                
   /product_types:
     get:
       summary: Get all available product types from this organization 
@@ -471,7 +489,7 @@ paths:
           description: Product type not found
         "409":
           description: Product already exists
-  /product_types/{product_type_id}/products/{product_id}:
+  /products/{product_id}:
     get:
       summary: Get a product by ID
       tags: [Products]
@@ -573,6 +591,405 @@ paths:
         "401":
           description: Unauthorized
         "404":
-          description: Product not found      
-
-  
+          description: Product not found 
+  /products/{product_id}/steps/{stage_id}:
+    get:
+      summary: Get all steps order under a stage of a product
+      tags: [Product Steps]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: stage_id
+          in: path
+          required: true
+          schema: { type: string }   
+      responses:
+        "200":
+          description: List of stage orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    step_id:
+                      type: integer
+                    tag:
+                      type: string
+                    order:
+                      type: integer
+        "404":
+          description: Product not found
+  /products/{product_id}/steps:
+    post:
+      summary: Create a new step order under a stage of a product
+      tags: [Product Steps]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_id  
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stage_id:
+                  type: string
+                  example: raw
+                tag_id:
+                  type: integer
+                  example: 1
+                sort_order:
+                  type: integer
+                  example: 1
+                name: 
+                  type: string
+                  example: 原料採購
+      responses:
+        "201":
+          description: Stage order created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  step_id:
+                    type: integer
+                  order:
+                    type: integer
+                  tag:
+                    type: string
+                  stage:
+                    type: string
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthorized 
+  /products/{product_id}/emissions:
+    get:
+      summary: Get all emissions under a product
+      tags: [Product Emissions]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: List of emissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    amount:
+                      type: number
+                      format: float
+                    timestamp:
+                      type: string
+                      format: date-time
+        "404":
+          description: Product not found
+    post:
+      summary: Create a new emission under a product
+      tags: [Product Emissions]
+      security:     
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:    
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stage_id:
+                  type: string 
+                  example: raw
+                factor_id:
+                  type: integer
+                  example: 1
+                material:
+                  type: string
+                  example: 瓶裝水(2000ml，PET包裝)
+                unit:
+                  type: string
+                  example: 瓶
+                amount:
+                  type: number
+                  format: float
+                  example: 2
+      responses:
+        "201":
+          description: Emission created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  message:
+                    type: string
+  /products/{product_id}/emissions/summary:
+    get:
+      summary: Get emissions summary for a product
+      tags: [Product Emissions]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Emissions summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_emissions:
+                    type: number
+                    format: float
+                  average_emissions:
+                    type: number
+                    format: float
+                  emission_count:
+                    type: integer
+        "404":
+          description: Product not found
+  /emissions:
+    get:
+      summary: Get all emissions from one organization, across all product types and products
+      tags: [Emissions]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of all emissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    emission_id:
+                      type: integer
+                    product_type_id:
+                      type: integer
+                    product_id:
+                      type: integer
+                    amount:
+                      type: number
+                      format: float
+                    timestamp:
+                      type: string
+                      format: date-time
+  /emissions/{emission_id}:
+    get:
+      summary: Get an emission by ID
+      tags: [Emissions]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: emission_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }     
+      responses:
+        "200":
+          description: Emission details
+          content:
+            application/json:
+              schema:   
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  amount:
+                    type: number
+                    format: float
+                  timestamp:
+                    type: string
+                    format: date-time
+        "404":
+          description: Emission not found
+    put:
+      summary: Update an emission by ID
+      tags: [Emissions]
+      security:
+        - BearerAuth: []        
+      parameters:
+        - name: emission_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:      
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                new amount:
+                  type: number
+                  format: float
+                  example: 23.45
+      responses:
+        "200":
+          description: Emission updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthorized
+        "404":
+          description: Emission not found
+    delete:
+      summary: Delete an emission by ID 
+      tags: [Emissions]
+      security:
+        - BearerAuth: []
+      parameters:     
+        - name: emission_id
+          in: path
+          required: true        
+          schema: { type: integer, minimum: 1 }
+      responses:  
+        "200":
+          description: Emission deleted successfully
+          content:
+            application/json: 
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "401":
+          description: Unauthorized
+        "404":
+          description: Emission not found
+  /factors:
+    get:
+      summary: Retrieve emission factors
+      description: 
+        Returns a list of emission factors. Supports search and filtering.
+      tags:
+        - Factors
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+          required: false
+          description: Free-text keyword to search factor names, categories, or subcategories.
+        - in: query
+          name: category
+          schema:
+            type: string
+          required: false
+          description: Filter by main category (e.g., 能資源, 包裝資材).
+        - in: query
+          name: midcategory
+          schema:
+            type: string
+          required: false
+          description: Filter by middle category.
+        - in: query
+          name: subcategory
+          schema:
+            type: string
+          required: false
+          description: Filter by subcategory.
+        - in: query
+          name: unit
+          schema:
+            type: string
+          required: false
+          description: Filter by unit type (e.g., 立方公尺(m3), 平方公尺(m2)).
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+          required: false
+          description: Number of results to return.
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+          required: false
+          description: Number of items to skip before starting to return results.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                        coefficient:
+                          type: number
+                        unit:
+                          type: string
+                        category:
+                          type: string
+                        subcategory:
+                          type: string
+                        midcategory:
+                          type: string
+                        announcement_year:
+                          type: integer

@@ -1,11 +1,10 @@
 # backend/routes/products.py
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import (
-    create_access_token,
-    get_jwt,
     get_jwt_identity,
     jwt_required,
 )
+from routes.emissions import product_emission_bp  
 from models.user_model import get_user_organization
 from models.products_model import(
                         list_products, 
@@ -14,12 +13,21 @@ from models.products_model import(
                         update_product, 
                         delete_product
                         )
+from models.steps_model import( 
+                        get_steps_under_product_stage, 
+                        create_steps,
+                        )
 
 
-products_bp = Blueprint('products', __name__)   
+# Blueprint for product routes under a product type
+product_types_products_bp = Blueprint('products', __name__)
 
-# -------- LIST PRODUCTS --------
-@products_bp.route('/products', methods=['GET'])
+# Blueprint for product routes
+product_bp = Blueprint("product_bp", __name__, url_prefix="/products")    
+product_bp.register_blueprint(product_emission_bp, url_prefix="/<int:product_id>") 
+
+# -------- Products under a Product Type routes --------
+@product_types_products_bp.get("products")
 @jwt_required()
 def get_all(type_id):
     uid = int(get_jwt_identity())
@@ -29,7 +37,7 @@ def get_all(type_id):
     return jsonify(products = ps), 200
 
 
-@products_bp.route('/products', methods=['POST'])
+@product_types_products_bp.post("/products")
 @jwt_required()
 def create(type_id):
     uid = int(get_jwt_identity())
@@ -43,19 +51,19 @@ def create(type_id):
     return jsonify({"message": "Product created"}), 201
 
 
-
-@products_bp.route('/products/<int:product_id>', methods=['GET'])
+# ------------- By Product ID routes --------------
+@product_bp.get("")
 @jwt_required()
-def get(type_id, product_id):
+def get(product_id):
     product = fetch_product(product_id)
     if not product:
         return jsonify({"error": "Product not found"}), 404
     return jsonify(product), 200
 
 
-@products_bp.route('/products/<int:product_id>', methods=['PUT'])
+@product_bp.put("")
 @jwt_required()
-def update(type_id, product_id):
+def update(product_id):
     data = request.get_json()
     organization_id = data.get("organization_id")
     type_id = data.get("type_id")
@@ -66,9 +74,27 @@ def update(type_id, product_id):
     return jsonify({"message": "Product updated"}), 200
 
 
-@products_bp.route('/products/<int:product_id>', methods=['DELETE'])
+@product_bp.delete("")
 @jwt_required()
-def delete(type_id, product_id):
+def delete(product_id):
     delete_product(product_id)
     return jsonify({"message": "Product deleted"}), 200
 
+
+# -------- By Product Id: Steps under a Product --------
+@product_bp.get("<int:product_id>/steps/<string:stage_id>")
+@jwt_required()
+def get_steps(product_id, stage_id):
+    steps = get_steps_under_product_stage(product_id, stage_id) 
+    return jsonify(steps=steps), 200
+
+@product_bp.post("<int:product_id>/steps")
+@jwt_required()
+def create(product_id):
+    data = request.get_json()
+    name = data.get("name")
+    stage_id = data.get("stage_id")
+    tag_id = data.get("tag_id")
+    sort_order = data.get("sort_order")
+    create_steps(product_id, stage_id , tag_id, name, sort_order)  
+    return jsonify({"message": "Step created under product"}), 201

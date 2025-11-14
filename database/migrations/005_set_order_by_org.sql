@@ -20,6 +20,7 @@ SET @has_idx := (
     AND index_name   = 'ux_pt_org_order'
 );
 
+-- Add UNIQUE constraint on (organization_id, order_id)
 SET @sql := IF(@has_idx = 0,
   'ALTER TABLE product_types ADD UNIQUE KEY ux_pt_org_order (organization_id, order_id)',
   'SELECT 1'

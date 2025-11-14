@@ -3,22 +3,6 @@ import json
 from typing import Optional
 from db_connection import get_db
 
-
-# ##################################### products ###########################
-# +-----------------+-----------------+------+-----+-------------------+-------------------+
-# | Field           | Type            | Null | Key | Default           | Extra             |
-# +-----------------+-----------------+------+-----+-------------------+-------------------+
-# | id              | bigint unsigned | NO   | PRI | NULL              | auto_increment    |
-# | organization_id | bigint unsigned | NO   | MUL | NULL              |                   |
-# | type_id         | bigint unsigned | YES  | MUL | NULL              |                   |
-# | name            | varchar(200)    | NO   |     | NULL              |                   |
-# | serial_number   | varchar(100)    | YES  |     | NULL              |                   |
-# | total_emission  | double          | YES  |     | 0                 |                   |
-# | created_at      | timestamp       | NO   |     | CURRENT_TIMESTAMP | DEFAULT_GENERATED |
-# | ended_at        | timestamp       | YES  |     | NULL              |                   |
-# | code            | varchar(50)     | YES  |     | NULL              |                   |
-# +-----------------+-----------------+------+-----+-------------------+-------------------+
-
 # -------------- CREATE A PRODUCT ---------------
 def create_product(organization_id: int, type_id: int, name: str, serial_number: Optional[str], code: Optional[str]) -> int:
     sql = """
