@@ -1,6 +1,7 @@
+// src/api/productTypes.ts
 // ====================================================================
 // Product Types API bindings
-// - List, create, and ensure a default type exists
+// - List, create, update, delete product types
 // - Normalizes varying backend shapes into ProductType
 // ====================================================================
 import { http } from "./http";
@@ -14,76 +15,121 @@ export interface ProductType {
   updated_at?: string;
 }
 
-export interface CreateProductTypeInput {
-  name: string;
+// -------------------- Helpers --------------------
+
+function normalize(pt: any): ProductType {
+  if (!pt) {
+    throw new Error("Empty product type payload");
+  }
+  return {
+    id: Number(pt.id),
+    name: String(pt.name ?? pt.type_name ?? ""),
+    order_id:
+      pt.order_id !== undefined && pt.order_id !== null
+        ? Number(pt.order_id)
+        : null,
+    organization_id:
+      pt.organization_id !== undefined && pt.organization_id !== null
+        ? Number(pt.organization_id)
+        : null,
+    created_at: pt.created_at ?? null ?? undefined,
+    updated_at: pt.updated_at ?? null ?? undefined,
+  };
 }
 
-// Normalize list-like responses to an array
-function normalizeList<T = any>(res: any): T[] {
-  if (!res) return [];
-  if (Array.isArray(res)) return res as T[];
-  if (Array.isArray(res.items)) return res.items as T[];
-  if (Array.isArray(res.data)) return res.data as T[];
-  if (Array.isArray(res.list)) return res.list as T[];
-  if (Array.isArray(res.product_types)) return res.product_types as T[];
-  if (Array.isArray(res.types)) return res.types as T[];
-  if (typeof res === "object") {
-    const vals = Object.values(res);
-    if (vals.length && typeof vals[0] === "object" && "id" in (vals[0] as any)) {
-      return vals as T[];
-    }
-  }
+function pickList(res: any): any[] {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.product_types)) return res.product_types;
+  if (Array.isArray(res?.data)) return res.data;
   return [];
 }
 
-// Normalize single type (handles wrappers)
-function normalizeType(res: any): ProductType {
-  if (!res) throw new Error("Empty response");
-  if (res.id) return res as ProductType;
-  if (res.product_type?.id) return res.product_type as ProductType;
-  if (res.data?.id) return res.data as ProductType;
-  return res as ProductType;
-}
-
-// Find by name (case-insensitive)
 function findByName(list: ProductType[], name: string): ProductType | undefined {
-  const target = name.trim().toLowerCase();
-  return list.find((t) => (t.name || "").trim().toLowerCase() === target);
+  const lower = name.toLowerCase();
+  return list.find((t) => (t.name || "").toLowerCase() === lower);
 }
 
-// GET /api/product_types
+// -------------------- API: List --------------------
+
+/** List all product types for current organization */
 export async function apiListProductTypes(): Promise<ProductType[]> {
-  const raw = await http.get<any>("/api/product_types");
-  return normalizeList<ProductType>(raw);
+  const res = await http.get<any>("/api/product_types");
+  const raw = pickList(res);
+  return raw.map(normalize);
 }
 
-// POST /api/product_types (fallback to existing on 409)
-export async function apiCreateProductType(
-  body: CreateProductTypeInput
-): Promise<ProductType> {
+/** Get a single product type by id */
+export async function apiGetProductType(id: number): Promise<ProductType | null> {
+  const res = await http.get<any>(`/api/product_types/${id}`);
+  if (!res) return null;
+  // 可能包在 {product_type: {...}}
+  const raw = res.product_type ?? res;
+  return normalize(raw);
+}
+
+// -------------------- API: Create / Update / Delete --------------------
+
+/** Create new product type (name required) */
+export async function apiCreateProductType(payload: {
+  name: string;
+}): Promise<ProductType> {
   try {
-    const raw = await http.post<any>("/api/product_types", body);
-    return normalizeType(raw);
+    const res = await http.post<any>("/api/product_types", payload);
+    // 後端目前回的可能是直接 row 或 {product_type: row}
+    const raw = res.product_type ?? res;
+    return normalize(raw);
   } catch (err: any) {
-    const msg = String(err?.message || err);
-    if (msg.includes("409")) {
+    // 特別處理 409：代表這個名稱的 type 已存在
+    const status = err?.status ?? err?.response?.status;
+    if (status === 409) {
+      // 再去 list 一次從現有清單找同名的
       const list = await apiListProductTypes();
-      const existed = findByName(list, body.name) || list[0];
-      if (existed) return existed;
+      const existing = findByName(list, payload.name);
+      if (existing) return existing;
     }
     throw err;
   }
 }
 
-// Ensure a default-like type exists (no reliance on /default)
+/** Update product type name/order */
+export async function apiUpdateProductType(
+  id: number,
+  patch: Partial<{ name: string; order_id: number }>
+): Promise<ProductType> {
+  const res = await http.put<any>(`/api/product_types/${id}`, patch);
+  const raw = res.product_type ?? res;
+  return normalize(raw);
+}
+
+/** Delete product type */
+export async function apiDeleteProductType(id: number): Promise<void> {
+  await http.delete(`/api/product_types/${id}`);
+}
+
+// -------------------- Helper: Get or create default --------------------
+
+/**
+ * Ensure a "default-like" product type exists.
+ * Strategy:
+ *   1) 先 list
+ *   2) 有名稱包含 "default" 的就用那個
+ *   3) 沒有就嘗試建立 "Default Type"
+ *   4) 建立時若撞到 409（已存在），再 list 一次找同名的
+ */
 export async function apiGetOrCreateDefaultType(): Promise<ProductType> {
   const list = await apiListProductTypes();
+
   const defaultLike =
     list.find((t) => (t.name || "").toLowerCase().includes("default")) ||
     findByName(list, "Default Type") ||
     list[0];
 
   if (defaultLike) return defaultLike;
+
+  // 這裡可能兩個地方同時進來呼叫，會發生：
+  // - A: list → 沒有 → create ⇒ 201
+  // - B: list → 沒有 → create ⇒ 409 (名稱已存在)
+  // 所以上面的 apiCreateProductType 已經把 409 當成「去抓現有那一筆」處理好了。
   return apiCreateProductType({ name: "Default Type" });
 }
 

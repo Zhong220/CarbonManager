@@ -19,7 +19,6 @@ import {
 import { http } from "@/api/http";
 import { clearTokens } from "@/api/auth";
 
-
 /** ================== API base 初始化（只做一次） ==================
  * dev：用 Vite proxy ⇒ base = ""（同源 /api/...）
  * prod：讀 .env 的 VITE_API_BASE
@@ -27,7 +26,8 @@ import { clearTokens } from "@/api/auth";
 if (import.meta.env.MODE === "production" && import.meta.env.VITE_API_BASE) {
   http.setBaseURL(import.meta.env.VITE_API_BASE as string);
 } else {
-  http.setBaseURL(""); // 開發模式一律留空，交給 Vite 代理
+  // 開發模式，交給 Vite 的 proxy 處理
+  http.setBaseURL("");
 }
 console.log("[main] http/auth initialized with base:", http.baseURL);
 
@@ -36,20 +36,25 @@ http.setOnUnauthorized(() => {
   try {
     clearTokens();
   } finally {
-    // 只做最小副作用：清 token + 友善提醒；是否導回登入交由頁面邏輯
     console.warn("[auth] 401 received → tokens cleared");
   }
 });
 
-// ========== （dev）健康檢查，快速確認 proxy/後端是否可達 ==========
-if (import.meta.env.MODE !== "production") {
-  fetch("/api/health")
-    .then((r) => r.text())
-    .then((t) => console.info("[dev] /api/health =>", t))
-    .catch((e) =>
-      console.warn("[dev] /api/health failed (check proxy target/port)", e)
-    );
-}
+/**
+ * ⚠️ 原本這裡會打 /api/health，因為後端沒有這條路，
+ * 會一直在 console 出現 404，看起來很吵，先整段關掉。
+ *
+ * 如果之後後端有提供 /health 或 /api/health，
+ * 再打開來就好。
+ */
+// if (import.meta.env.MODE !== "production") {
+//   fetch("/api/health")
+//     .then((r) => r.text())
+//     .then((t) => console.info("[dev] /api/health =>", t))
+//     .catch((e) =>
+//       console.warn("[dev] /api/health failed (check proxy target/port)", e)
+//     );
+// }
 
 // ========== 本機資料清理 ==========
 function purgeEmptyStageConfigs() {
@@ -92,7 +97,9 @@ try {
 /** --------- Render Root --------- */
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <BrowserRouter
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
       <GlobalStyle />
       <App />
     </BrowserRouter>

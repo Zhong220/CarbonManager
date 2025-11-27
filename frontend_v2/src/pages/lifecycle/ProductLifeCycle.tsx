@@ -1,4 +1,17 @@
-// src/pages/ProductLifeCyclePage.tsx
+import {
+  apiCreateEmission,
+  apiSearchFactors,
+  apiListFactorsByTag,
+  apiListStages,
+  apiListEmissionsByProduct,
+  apiUpdateEmissionQuantity,
+  apiListStepsByStage,
+  apiSaveStepOrder,
+  FactorDTO,
+  StageRow,
+  EmissionDTO,
+  StageId, // ★ 新增
+} from "@/api/lifecycle";
 import React, { useMemo, useEffect, useState } from "react";
 import styled from "styled-components";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
@@ -12,15 +25,9 @@ import type { EmissionRecord } from "@/utils/lifecycleTypes";
 
 import {
   loadProducts,
-  loadRecords,
-  saveRecords,
-  getCurrentShopIdSafe,
   loadStageConfig,
   saveStageConfig,
-  // 🔽 新增：拿 owner 與帳號、預設店鋪
-  getShopsMap,
-  getAccount,
-  DEFAULT_SHOP_ID,
+  getCurrentShopIdSafe,
 } from "@/utils/storage";
 import {
   FIXED_STAGE_TEMPLATES,
@@ -31,11 +38,50 @@ import {
   StepTag,
 } from "@/utils/lifecycleTypes";
 import { exportToExcel } from "@/utils/export";
-import emissionFactors from "@/assets/emissionFactors_with_defaults.json";
 import { aggregateByStageAndStep } from "@/utils/aggregateEmissions";
 import StageAccordion from "@/ui/components/StageAccordion";
+import { FactorBrowser, FactorPick } from "@/ui/components/FactorBrowser";
 
-/* ========== 小工具 ========== */
+/** ★★ 關鍵：tag 名稱 → tag_id 對照表 ★★
+ *  這裡的數字是暫填的，請依照資料庫裡真正的 id 修改。
+ *  你可以進 MySQL 查：
+ *    SELECT id, name FROM tags;   （實際表名請依後端為準）
+ */
+const STEP_TAG_ID_MAP: Partial<Record<StepTag, number>> = {
+  // 原料取得
+  "種子/種苗": 1,
+  農藥: 2,
+  肥料: 3,
+  其他生產資材: 4,
+  整地: 5,
+  定植: 6,
+  栽培管理: 7,
+  採收: 8,
+  包裝資材: 9,
+  廢棄物: 10,
+  能源資源: 11,
+  運輸: 12,
+
+  // 製造
+  冷藏暫存: 13,
+  一次加工: 14,
+  半成品暫存: 15,
+  二次加工: 16,
+  包裝: 17,
+  出貨: 18,
+
+  // 配送銷售
+  銷售點: 19,
+
+  // 使用
+  消費者使用: 20,
+
+  // 廢棄處理
+  回收: 21,
+  焚化: 22,
+  掩埋: 23,
+};
+
 function useIsMobile(bp = 720) {
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth <= bp : false
@@ -47,6 +93,14 @@ function useIsMobile(bp = 720) {
   }, [bp]);
   return isMobile;
 }
+
+function mapRole(userType?: "shop" | "customer" | null) {
+  if (userType === "shop") return "Farmer";
+  if (userType === "customer") return "Consumer";
+  return "None";
+}
+
+type AnalysisRange = "all" | "7d" | "30d" | "365d";
 
 /* ========== 標的(單一產品) ========== */
 type TargetUnit = "kg" | "pack";
@@ -64,7 +118,6 @@ function loadTarget(shopId: string, productId: string): ProductTarget | null {
     const raw = localStorage.getItem(targetKey(shopId, productId));
     if (!raw) return null;
     const obj = JSON.parse(raw);
-    if (!obj || typeof obj !== "object") return null;
     if (obj.unit !== "kg" && obj.unit !== "pack") return null;
     return obj as ProductTarget;
   } catch {
@@ -84,95 +137,85 @@ function outputMassKg(t?: ProductTarget | null) {
   return undefined;
 }
 
-/* 舊資料 → 新結構 */
-function migrateOldRecordsIfNeeded(
-  oldRecords: any[],
-  cfg: StageConfig[]
-): { changed: boolean; records: LifeRecord[] } {
-  let changed = false;
-  const byTitle: Record<string, StageConfig> = Object.fromEntries(
-    cfg.map((s) => [s.title, s])
-  );
-  const records: LifeRecord[] = (oldRecords || []).map((r: any) => {
-    if (r.stageId && r.stepId && r.tag) return r as LifeRecord;
-    const stageCfg = byTitle[r.stage] || cfg[0];
-    const tag = r.step;
-    const userStep = stageCfg.steps.find((s) => s.tag === tag);
-    changed = true;
-    return {
-      id: String(r.id ?? Date.now()),
-      productId: String(r.productId ?? ""),
-      stageId: stageCfg.id,
-      stepId: userStep?.id ?? `legacy-${tag}`,
-      stepLabel: r.step ?? tag,
-      tag,
-      material: r.material,
-      amount: r.amount,
-      unit: r.unit ?? "",
-      emission: r.emission ?? 0,
-      timestamp: r.timestamp,
-      date: r.date,
-    };
-  });
-  return { changed, records };
-}
+/* 後端 emission → LifeRecord 的 mapping（不依賴 emissions.unit） */
+function mapEmissionToLifeRecord(row: EmissionDTO & any): LifeRecord {
+  const ts =
+    typeof row.timestamp === "number"
+      ? row.timestamp
+      : row.created_at
+      ? Math.floor(new Date(row.created_at).getTime() / 1000)
+      : undefined;
 
-function findCoefficient(tag: string, material?: string, unit?: string) {
-  const list = (emissionFactors as any[]).filter(
-    (f: any) =>
-      Array.isArray(f.applicableSteps) && f.applicableSteps.includes(tag)
-  );
-  const hit = list.find(
-    (f: any) =>
-      String(f.name).trim() === String(material ?? "").trim() &&
-      String(f.unit ?? "").trim() === String(unit ?? "").trim()
-  );
-  const raw = hit?.coefficient ?? hit?.coe;
-  const parsed =
-    raw !== undefined && raw !== null ? parseFloat(String(raw)) : NaN;
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
+  const emission =
+    row.emission_amount ?? row.total_emission ?? row.emission ?? 0;
 
-type AnalysisRange = "all" | "7d" | "30d" | "365d";
+  const amount = row.quantity ?? row.amount ?? 0;
+
+  const unit =
+    row.factor_unit ?? row.transport_unit ?? row.fuel_input_unit ?? "";
+
+  return {
+    id: String(row.id),
+    productId: String(row.product_id),
+    stageId: (row.stage_id as FixedStageId) ?? "raw",
+    stepId: row.step_id
+      ? String(row.step_id)
+      : row.step_tag
+      ? `tag-${row.step_tag}`
+      : `step-${row.id}`,
+    stepLabel: row.step_name ?? row.step_tag ?? row.name ?? "(未命名步驟)",
+    tag: row.step_tag ?? row.tag ?? "",
+    material: row.material ?? row.name ?? "",
+    amount: Number(amount) || 0,
+    unit,
+    emission: Number(emission) || 0,
+    timestamp: ts,
+    date: row.date ?? row.created_at ?? null,
+  };
+}
 
 /* ========== 主頁面 ========== */
 export default function ProductLifeCyclePage() {
-  useIsMobile(720); // 目前未使用，但保留以利之後 RWD 行為
+  useIsMobile(720);
   const { productId } = useParams<{ productId: string }>();
   const [searchParams] = useSearchParams();
   const explicitShopId = searchParams.get("shop");
   const navigate = useNavigate();
 
-  const { role } = useUser();
+  const { ready, user } = useUser();
+  const role = mapRole((user as any)?.user_type ?? null);
+
   const { exportXlsmByProduct } = useReport();
 
-  // === 權限計算（純前端） ===
   const workingShopId = explicitShopId || getCurrentShopIdSafe();
-  const account = getAccount();
-  const shopsMap = useMemo(() => getShopsMap(), []);
-  const isOwner =
-    !!workingShopId &&
-    !!account &&
-    role === "Farmer" &&
-    shopsMap[workingShopId]?.owner === account;
-
-  const canEdit = isOwner; // 只有店主可寫
-  const canRead =
-    role === "Consumer" ||
-    canEdit ||
-    (workingShopId === DEFAULT_SHOP_ID && role !== "None");
-
+  const canEdit = role === "Farmer";
+  const canRead = role !== "None";
   const readOnly = !canEdit;
 
-  // 沒有讀權限就導回產品列表
+  const [_stageRows, setStageRows] = useState<StageRow[] | null>(null);
+
   useEffect(() => {
+    (async () => {
+      try {
+        if (!productId) return;
+        const rows = await apiListStages(Number(productId));
+        setStageRows(rows);
+      } catch (e) {
+        console.warn("[stages] 無法取得後端 stages，將以快取/覆蓋推斷。", e);
+        setStageRows(null);
+      }
+    })();
+  }, [productId]);
+
+  useEffect(() => {
+    if (!ready) return;
     if (!canRead) {
       const suffix = explicitShopId
         ? `?shop=${encodeURIComponent(explicitShopId)}`
         : "";
       navigate("/products" + suffix);
     }
-  }, [canRead, explicitShopId, navigate]);
+  }, [ready, canRead, explicitShopId, navigate]);
 
   const [productName, setProductName] = useState("");
   const [stages, setStages] = useState<StageConfig[]>([
@@ -183,29 +226,37 @@ export default function ProductLifeCyclePage() {
     "lifecycle" | "history" | "analysis"
   >("lifecycle");
 
-  // 標的
   const [target, setTarget] = useState<ProductTarget | null>(null);
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [editingTarget, setEditingTarget] = useState<ProductTarget | null>(
     null
   );
 
-  // 新增紀錄 Modal
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedStep, setSelectedStep] = useState<{
     stageId: FixedStageId;
     step: UserStep;
   } | null>(null);
-  const [selectedMaterial, setSelectedMaterial] = useState<any>(null);
+
+  const [factorOptions, setFactorOptions] = useState<FactorDTO[]>([]);
+  const [selectedMaterial, setSelectedMaterial] = useState<FactorDTO | null>(
+    null
+  );
+
   const [inputAmount, setInputAmount] = useState<string>("");
+  const [keyword, setKeyword] = useState(""); // ★ 改用 onInputChange 控制
   const [customMaterialName, setCustomMaterialName] = useState("");
   const [showSavedTip, setShowSavedTip] = useState(false);
 
-  // 總覽區間
+  const [cat, setCat] = useState<string>("");
+  const [mid, setMid] = useState<string>("");
+  const [sub, setSub] = useState<string>("");
+
   const [range, setRange] = useState<AnalysisRange>("all");
 
+  // ===== 初始化：產品名稱、StageConfig、標的、後端 emissions / steps =====
   useEffect(() => {
-    if (!productId || !canRead) return;
+    if (!productId || !ready || !canRead) return;
     const shopId = workingShopId;
 
     const products = loadProducts(shopId);
@@ -217,39 +268,107 @@ export default function ProductLifeCyclePage() {
     let cfg = loadStageConfig(shopId, productId!);
     if (!cfg || !Array.isArray(cfg) || cfg.length === 0) {
       cfg = [...FIXED_STAGE_TEMPLATES];
-      // 只有有寫權限才寫入模板
       if (canEdit) saveStageConfig(shopId, productId!, cfg);
     }
     setStages(cfg);
 
-    const loaded = loadRecords(productId!, shopId) as any[];
-    const migrated = migrateOldRecordsIfNeeded(loaded, cfg);
-    if (migrated.changed) {
-      setRecords(migrated.records);
-      if (canEdit) saveRecords(productId!, migrated.records, shopId);
-    } else {
-      setRecords(loaded as LifeRecord[]);
-    }
-
     setTarget(loadTarget(shopId, productId!));
-  }, [productId, workingShopId, canRead, canEdit]);
 
-  const matchedOptions = useMemo(() => {
-    const tag = selectedStep?.step.tag || "";
-    const filtered = (emissionFactors as any[]).filter((f: any) =>
-      f.applicableSteps?.includes(tag)
-    );
-    const uniqMap = new Map<string, any>();
-    filtered.forEach((o: any) => {
-      const key = `${o.name}__${o.unit ?? ""}`;
-      if (!uniqMap.has(key)) uniqMap.set(key, o);
-    });
-    return Array.from(uniqMap.values());
-  }, [selectedStep]);
+    const pidNum = Number(productId);
 
-  const rawCoefficient =
-    selectedMaterial?.coefficient ?? selectedMaterial?.coe ?? "";
-  const parsedCoefficient = parseFloat(rawCoefficient);
+    // 後端 emissions
+    (async () => {
+      try {
+        const list = await apiListEmissionsByProduct(pidNum);
+        const mapped = (list || []).map(mapEmissionToLifeRecord);
+        setRecords(mapped);
+      } catch (e) {
+        console.error("[emissions] 載入產品排放紀錄失敗", e);
+        setRecords([]);
+      }
+    })();
+
+    // 後端 steps：若有資料則覆蓋對應階段的 steps
+    (async () => {
+      try {
+        const backendStepsByStage: Record<FixedStageId, UserStep[]> = {
+          raw: [],
+          manufacture: [],
+          distribution: [],
+          use: [],
+          disposal: [],
+        };
+
+        for (const s of FIXED_STAGE_TEMPLATES) {
+          const rows = await apiListStepsByStage(s.id as any, {
+            productId: pidNum,
+          });
+          backendStepsByStage[s.id] = rows.map((r) => ({
+            id: `db:${r.id}`,
+            label: r.name,
+            tag: r.tag || r.name,
+          }));
+        }
+
+        setStages((prev) =>
+          prev.map((s) => {
+            const backend = backendStepsByStage[s.id];
+            if (backend && backend.length) {
+              return { ...s, steps: backend };
+            }
+            return s;
+          })
+        );
+      } catch (e) {
+        console.warn(
+          "[steps] 載入後端 steps 失敗，暫時使用本地 stageConfig",
+          e
+        );
+      }
+    })();
+  }, [productId, workingShopId, canRead, canEdit, ready]);
+
+  /** Factors 載入：keyword/三分類優先；否則用 step_tag -> q=tag -> 寬查 */
+  useEffect(() => {
+    let stop = false;
+    const run = async () => {
+      if (!selectedStep || !modalOpen) {
+        if (!stop) setFactorOptions([]);
+        return;
+      }
+      const hasFilters = !!(cat.trim() || mid.trim() || sub.trim());
+      try {
+        let list: FactorDTO[] = [];
+        if (keyword.trim() || hasFilters) {
+          const query: any = { limit: 50 };
+          if (keyword.trim()) query.q = keyword.trim();
+          if (cat.trim()) query.category = cat.trim();
+          if (mid.trim()) query.midcategory = mid.trim();
+          if (sub.trim()) query.subcategory = sub.trim();
+          list = await apiSearchFactors(query);
+        } else {
+          list = await apiListFactorsByTag({
+            step_tag: selectedStep.step.tag,
+            limit: 50,
+          });
+        }
+        if (!stop) setFactorOptions(Array.isArray(list) ? list : []);
+      } catch (e) {
+        console.error("load factors failed", e);
+        if (!stop) setFactorOptions([]);
+      }
+    };
+    const h = setTimeout(run, 250);
+    return () => {
+      stop = true;
+      clearTimeout(h);
+    };
+  }, [selectedStep, modalOpen, keyword, cat, mid, sub]);
+
+  const parsedCoefficient =
+    typeof selectedMaterial?.value_per_unit === "number"
+      ? selectedMaterial.value_per_unit!
+      : NaN;
   const parsedAmount = parseFloat(inputAmount);
   const emission =
     selectedMaterial &&
@@ -264,7 +383,7 @@ export default function ProductLifeCyclePage() {
       .filter(
         (r) =>
           r.stageId === selectedStep.stageId &&
-          r.stepId === selectedStep.step.id
+          (r.tag === selectedStep.step.tag || r.stepId === selectedStep.step.id)
       )
       .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
   }, [records, selectedStep]);
@@ -274,10 +393,67 @@ export default function ProductLifeCyclePage() {
     setSelectedStep({ stageId, step });
     setSelectedMaterial(null);
     setInputAmount("");
+    setKeyword("");
     setCustomMaterialName("");
+    setCat("");
+    setMid("");
+    setSub("");
     setShowSavedTip(false);
     setModalOpen(true);
   };
+
+  // 把原本的 syncStepsToBackend 整個換成這版
+  async function syncStepsToBackend(stageId: FixedStageId, steps: UserStep[]) {
+    if (!productId) return;
+    const pidNum = Number(productId);
+
+    // 找出「這次需要新建到 DB 的步驟」（id 不是 db: 開頭）
+    const newSteps = steps.filter((st) => !st.id.startsWith("db:"));
+    if (!newSteps.length) {
+      console.info("[steps] 沒有新步驟需要同步到後端");
+      return;
+    }
+
+    const payloadSteps = newSteps
+      .map((st) => {
+        const tagId = STEP_TAG_ID_MAP[st.tag as StepTag];
+
+        if (!tagId) {
+          console.warn(
+            "[steps] 無對應 tag_id，略過同步此步驟（只存在 localStorage）",
+            st
+          );
+          return null;
+        }
+
+        const sortOrder = steps.findIndex((x) => x.id === st.id) + 1;
+
+        return {
+          stage_id: stageId as any as StageId,
+          tag_id: tagId,
+          name: st.label,
+          sort_order: sortOrder,
+        };
+      })
+      .filter(Boolean) as any[];
+
+    if (!payloadSteps.length) {
+      console.info(
+        "[steps] 沒有任何帶 tag_id 的步驟可同步，略過呼叫後端"
+      );
+      return;
+    }
+
+    try {
+      await apiSaveStepOrder(pidNum, stageId as any as StageId, payloadSteps);
+      console.log("[steps] 已同步步驟到後端", payloadSteps);
+    } catch (e) {
+      console.error(
+        "[steps] 同步步驟到後端失敗（略過，不影響 UI）",
+        e
+      );
+    }
+  }
 
   const addUserStep = (stageId: FixedStageId, label: string, tag: StepTag) => {
     if (readOnly) return;
@@ -300,6 +476,12 @@ export default function ProductLifeCyclePage() {
             }
       );
       saveStageConfig(workingShopId, productId!, next);
+
+      // 同步到後端（fire-and-forget）
+      const targetStage = next.find((s) => s.id === stageId);
+      if (targetStage) {
+        void syncStepsToBackend(stageId, targetStage.steps);
+      }
       return next;
     });
   };
@@ -326,44 +508,197 @@ export default function ProductLifeCyclePage() {
         return { ...s, steps: arr };
       });
       saveStageConfig(workingShopId, productId!, next);
+
+      const targetStage = next.find((s) => s.id === stageId);
+      if (targetStage) {
+        void syncStepsToBackend(stageId, targetStage.steps);
+      }
       return next;
     });
   };
 
-  const handleSaveRecord = () => {
+  // ★★★ 重點修正區：避免重複 INSERT 造成 duplicate 'product-stage' ★★★
+  const handleSaveRecord = async () => {
     if (readOnly || !selectedStep) return;
     const amt = parseFloat(inputAmount);
     if (!selectedMaterial || Number.isNaN(amt) || amt <= 0) {
       alert("請選擇係數並輸入用量");
       return;
     }
+
     const factorName = String(selectedMaterial.name).trim();
     const nowTs = Math.floor(Date.now() / 1000);
+    const pidNum = Number(productId);
+    const emissionValue = +(parsedCoefficient * amt).toFixed(3);
 
-    const newItem: LifeRecord = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      productId: productId!,
+    console.log("[emission] prepare save", {
+      productId: pidNum,
       stageId: selectedStep.stageId,
-      stepId: selectedStep.step.id,
-      stepLabel: selectedStep.step.label,
-      tag: selectedStep.step.tag,
-      material: factorName,
-      amount: amt,
-      unit: selectedMaterial.unit || "",
-      emission: +(parsedCoefficient * amt).toFixed(3),
-      timestamp: nowTs,
-      date: new Date(nowTs * 1000).toISOString(),
-    };
+      factorId: selectedMaterial.id,
+      amt,
+      emissionValue,
+    });
 
-    const next = [...records, newItem];
-    setRecords(next);
-    saveRecords(productId!, next, workingShopId);
+    // 1) 先從目前前端 records 找「同階段、已寫進 DB 的紀錄」
+    let existing:
+      | {
+          emissionId: number;
+          amount: number;
+          emission: number;
+        }
+      | undefined;
 
-    setInputAmount("");
-    setSelectedMaterial(null);
-    setCustomMaterialName("");
-    setShowSavedTip(true);
-    setTimeout(() => setShowSavedTip(false), 1200);
+    const fromRecords = records.find(
+      (r) =>
+        r.stageId === selectedStep.stageId &&
+        !Number.isNaN(Number(r.id)) // 確保是 DB 回來的 id（數字）
+    );
+    if (fromRecords) {
+      existing = {
+        emissionId: Number(fromRecords.id),
+        amount: fromRecords.amount ?? 0,
+        emission: Number(fromRecords.emission) || 0,
+      };
+    }
+
+    // 2) 如果 records 裡找不到，再去後端 list 一次，用 mapEmissionToLifeRecord 比對 stageId
+    if (!existing) {
+      try {
+        const list = await apiListEmissionsByProduct(pidNum);
+        for (const row of list || []) {
+          const mapped = mapEmissionToLifeRecord(row as any);
+          if (mapped.stageId === selectedStep.stageId) {
+            existing = {
+              emissionId: Number(row.id),
+              amount: mapped.amount ?? 0,
+              emission: Number(mapped.emission) || 0,
+            };
+            break;
+          }
+        }
+      } catch (e) {
+        console.warn(
+          "[emissions] 檢查既有紀錄失敗，將視為尚未建立，直接嘗試建立",
+          e
+        );
+      }
+    }
+
+    const prevRecords = records.slice();
+
+    try {
+      if (existing) {
+        // ★ 已存在同 stage 的 emission：累加數量與排放，呼叫 UPDATE，而不是再 CREATE
+        const currQty = existing.amount || 0;
+        const currEm = existing.emission || 0;
+
+        const nextQty = +(currQty + amt).toFixed(6);
+        const nextEm = +(currEm + emissionValue).toFixed(6);
+
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === String(existing!.emissionId)
+              ? {
+                  ...r,
+                  amount: nextQty,
+                  emission: nextEm,
+                  timestamp: nowTs,
+                  date: new Date(nowTs * 1000).toISOString(),
+                }
+              : r
+          )
+        );
+
+        console.log("[emission] update existing", {
+          emissionId: existing.emissionId,
+          nextQty,
+          nextEm,
+        });
+
+        await apiUpdateEmissionQuantity(Number(existing.emissionId), {
+          new_amount: nextQty,
+          new_emission_amount: nextEm,
+          new_total_emission: nextEm,
+          quantity: nextQty,
+          emission_amount: nextEm,
+          total_emission: nextEm,
+        });
+      } else {
+        // ★ 尚無同 stage 紀錄：這才真的呼叫 CREATE，避免撞 unique key
+        const newItem: LifeRecord = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          productId: productId!,
+          stageId: selectedStep.stageId,
+          stepId: selectedStep.step.id,
+          stepLabel: selectedStep.step.label,
+          tag: selectedStep.step.tag,
+          material: factorName,
+          amount: amt,
+          unit: selectedMaterial.unit || "",
+          emission: emissionValue,
+          timestamp: nowTs,
+          date: new Date(nowTs * 1000).toISOString(),
+        };
+
+        setRecords((prev) => [...prev, newItem]);
+
+        console.log("[emission] create new → POST", {
+          productId: pidNum,
+          payload: {
+            fixedStage: selectedStep.stageId,
+            step_tag: newItem.tag,
+            name:
+              customMaterialName || selectedMaterial?.name || newItem.material,
+            factor_id: selectedMaterial?.id ?? null,
+            quantity: amt,
+            material: newItem.material,
+            amount: newItem.amount,
+            emission_amount: Number(newItem.emission) || 0,
+            timestamp: newItem.timestamp ?? null,
+            date: newItem.date ?? null,
+            note: null,
+          },
+        });
+
+        await apiCreateEmission(pidNum, {
+          fixedStage: selectedStep.stageId,
+          step_tag: newItem.tag,
+          name:
+            customMaterialName || selectedMaterial?.name || newItem.material,
+          factor_id: selectedMaterial?.id ?? null,
+          quantity: amt,
+          material: newItem.material,
+          amount: newItem.amount,
+          emission_amount: Number(newItem.emission) || 0,
+          timestamp: newItem.timestamp ?? null,
+          date: newItem.date ?? null,
+          note: null,
+        });
+      }
+
+      // 再重抓一次後端資料，確認 DB 的真實狀態
+      try {
+        const list = await apiListEmissionsByProduct(pidNum);
+        const mapped = (list || []).map(mapEmissionToLifeRecord);
+        setRecords(mapped);
+        console.log("[emission] reload from backend", mapped);
+      } catch (e) {
+        console.warn("[emissions] 重新載入失敗，暫時沿用前端狀態", e);
+      }
+
+      setInputAmount("");
+      setSelectedMaterial(null);
+      setKeyword("");
+      setCustomMaterialName("");
+      setShowSavedTip(true);
+      setTimeout(() => setShowSavedTip(false), 1200);
+    } catch (e: any) {
+      console.error("同步 emission 到後端失敗，回滾本地變更", e);
+      setRecords(prevRecords);
+      alert(
+        "寫入失敗，已回滾本地紀錄。\n\n" + String(e?.message || e || "Unknown")
+      );
+    }
   };
 
   const handleExport = () => {
@@ -387,7 +722,6 @@ export default function ProductLifeCyclePage() {
 
   const saveAndReturn = () => {
     if (!readOnly) {
-      saveRecords(productId!, records, workingShopId);
       saveStageConfig(workingShopId, productId!, stages);
     }
     const suffix = explicitShopId
@@ -417,6 +751,7 @@ export default function ProductLifeCyclePage() {
 
   const handleHistoryEdit = (id: string, patch: Partial<RecordItem>) => {
     if (readOnly) return;
+    // 這裡暫時只改前端顯示，真正更新 DB 的邏輯可以之後再補
     setRecords((prev) => {
       const next = prev.map((r) => {
         if (r.id !== id) return r;
@@ -430,18 +765,11 @@ export default function ProductLifeCyclePage() {
           patch.material !== undefined ? String(patch.material) : r.material;
         const newUnit = patch.unit !== undefined ? String(patch.unit) : r.unit;
 
-        let coef = findCoefficient(r.tag, newMaterial, newUnit);
-        if (
-          (coef === undefined || !Number.isFinite(coef)) &&
-          r.amount > 0 &&
-          Number.isFinite(r.emission as number)
-        ) {
-          coef = Number(r.emission) / r.amount;
+        let newEmission = r.emission;
+        if (r.amount > 0 && Number.isFinite(Number(r.emission))) {
+          const ratio = Number(r.emission) / r.amount;
+          newEmission = +(ratio * newAmount).toFixed(3);
         }
-        const newEmission =
-          coef !== undefined && Number.isFinite(coef)
-            ? +(coef * newAmount).toFixed(3)
-            : r.emission;
 
         return {
           ...r,
@@ -451,21 +779,16 @@ export default function ProductLifeCyclePage() {
           emission: newEmission,
         };
       });
-      saveRecords(productId!, next, workingShopId);
       return next;
     });
   };
 
   const handleHistoryDelete = (id: string) => {
     if (readOnly) return;
-    setRecords((prev) => {
-      const next = prev.filter((r) => r.id !== id);
-      saveRecords(productId!, next, workingShopId);
-      return next;
-    });
+    // 同上，暫時只刪前端記錄，之後可接 apiDeleteEmission
+    setRecords((prev) => prev.filter((r) => r.id !== id));
   };
 
-  /* 總覽計算 */
   const nowSec = Math.floor(Date.now() / 1000);
   const sinceSec = useMemo(() => {
     switch (range) {
@@ -490,7 +813,6 @@ export default function ProductLifeCyclePage() {
     [analysisRecords]
   );
 
-  // 依係數 Top10
   const byMaterial = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of analysisRecords) {
@@ -510,7 +832,6 @@ export default function ProductLifeCyclePage() {
       ? totalEmission / target.packCount
       : undefined;
 
-  /* === 準備 Stage/Step 彙總 === */
   const recordsForAgg: EmissionRecord[] = useMemo(() => {
     return analysisRecords.map((r) => ({
       id: r.id,
@@ -528,7 +849,6 @@ export default function ProductLifeCyclePage() {
     [recordsForAgg]
   );
 
-  /* 標的編輯 */
   const openTarget = () => {
     if (readOnly) return;
     setEditingTarget(
@@ -537,6 +857,7 @@ export default function ProductLifeCyclePage() {
         packCount: undefined,
         gramsPerPack: undefined,
         totalKg: undefined,
+        note: undefined,
       }
     );
     setTargetModalOpen(true);
@@ -562,7 +883,6 @@ export default function ProductLifeCyclePage() {
     setTargetModalOpen(false);
   };
 
-  // === productId 防呆 ===
   if (!productId) {
     return (
       <Shell>
@@ -571,9 +891,16 @@ export default function ProductLifeCyclePage() {
     );
   }
 
+  if (!ready) {
+    return (
+      <Shell>
+        <NoteCard>載入中…</NoteCard>
+      </Shell>
+    );
+  }
+
   return (
     <Shell>
-      {/* Header */}
       <Header>
         <BackBtn onClick={saveAndReturn} aria-label="返回">
           ←
@@ -617,7 +944,6 @@ export default function ProductLifeCyclePage() {
         )}
       </TargetBar>
 
-      {/* 分頁（膠囊） */}
       <Tabs>
         <Seg
           $active={activeTab === "lifecycle"}
@@ -639,7 +965,6 @@ export default function ProductLifeCyclePage() {
         </Seg>
       </Tabs>
 
-      {/* ===== 內容 ===== */}
       {activeTab === "lifecycle" && (
         <Stack $gap={12}>
           {stages.every((s) => s.steps.length === 0) && (
@@ -651,7 +976,7 @@ export default function ProductLifeCyclePage() {
             <Card key={stage.id}>
               <StageBlock
                 stage={stage}
-                productId={productId} // ← 必傳！用路由的 productId
+                productId={productId}
                 readOnly={readOnly}
                 onStepClick={handleStepClick}
                 onAddStep={addUserStep}
@@ -679,7 +1004,6 @@ export default function ProductLifeCyclePage() {
 
       {activeTab === "analysis" && (
         <Stack $gap={12}>
-          {/* 區間與目標摘要（輕量） */}
           <Row $wrap $gap={8} $align="center">
             <Muted>
               {target ? (
@@ -687,8 +1011,8 @@ export default function ProductLifeCyclePage() {
                   <>標的總重：{target.totalKg} kg</>
                 ) : (
                   <>
-                    標的：{target.packCount} 包，單件 {target.gramsPerPack} g（總重{" "}
-                    {(outputMassKg(target) ?? 0).toFixed(2)} kg）
+                    標的：{target.packCount} 包，單件 {target.gramsPerPack} g
+                    （總重 {(outputMassKg(target) ?? 0).toFixed(2)} kg）
                   </>
                 )
               ) : (
@@ -715,7 +1039,6 @@ export default function ProductLifeCyclePage() {
             </Segment>
           </Row>
 
-          {/* 指標卡 */}
           <StatGrid>
             <StatCard>
               <StatLabel>總排放量</StatLabel>
@@ -744,11 +1067,9 @@ export default function ProductLifeCyclePage() {
             </StatCard>
           </StatGrid>
 
-          {/* ===== 依階段（含 Step 明細） + 依係數 Top10 ===== */}
           <GridTwo>
             <TableCard>
               <TableTitle>依階段（含步驟明細）</TableTitle>
-
               {stageAgg.byStage.length === 0 ? (
                 <Muted>目前區間沒有資料</Muted>
               ) : (
@@ -786,7 +1107,6 @@ export default function ProductLifeCyclePage() {
         </Stack>
       )}
 
-      {/* ===== 新增紀錄 Modal ===== */}
       {!readOnly && (
         <Modal open={modalOpen} onClose={() => setModalOpen(false)} size="md">
           {selectedStep && (
@@ -817,28 +1137,48 @@ export default function ProductLifeCyclePage() {
               {showSavedTip && <Ok>✅ 已新增！</Ok>}
 
               <Input
-                placeholder="輸入項目名稱（不影響歷史顯示）"
+                placeholder="輸入項目名稱（顯示用，可留空）"
                 value={customMaterialName}
                 onChange={(e) => setCustomMaterialName(e.target.value)}
               />
 
+              <FactorBrowser
+                value={{
+                  category: cat || undefined,
+                  midcategory: mid || undefined,
+                  subcategory: sub || undefined,
+                }}
+                onChange={(pick: FactorPick) => {
+                  setCat(pick.category ?? "");
+                  setMid(pick.midcategory ?? "");
+                  setSub(pick.subcategory ?? "");
+                  setKeyword(""); // ★ 切換分類時清關鍵字
+                }}
+              />
+
               <Autocomplete
-                options={matchedOptions}
-                getOptionLabel={(o: any) => o.name}
-                isOptionEqualToValue={(o: any, v: any) =>
-                  o?.name === v?.name && (o?.unit ?? "") === (v?.unit ?? "")
+                options={factorOptions}
+                noOptionsText={
+                  keyword || cat || mid || sub ? "查無結果" : "載入中或尚無資料"
                 }
-                renderOption={(props, option: any) => (
-                  <li {...props} key={`${option.name}__${option.unit ?? ""}`}>
+                getOptionLabel={(o: FactorDTO) =>
+                  o ? `${o.name}${o.unit ? `（${o.unit}）` : ""}` : ""
+                }
+                isOptionEqualToValue={(o: FactorDTO, v: FactorDTO) =>
+                  o?.id === v?.id
+                }
+                renderOption={(props, option: FactorDTO) => (
+                  <li {...props} key={option.id}>
                     {option.name} {option.unit ? `（${option.unit}）` : ""}
                   </li>
                 )}
                 onChange={(e, val) => setSelectedMaterial(val)}
+                onInputChange={(e, val) => setKeyword(val ?? "")} // ★ 正確綁定輸入
                 value={selectedMaterial}
                 renderInput={(params) => (
                   <TextField
                     {...params}
-                    label="選擇係數（依 Tag 過濾）"
+                    label="選擇係數（可輸入關鍵字過濾）"
                     variant="outlined"
                   />
                 )}
@@ -859,8 +1199,8 @@ export default function ProductLifeCyclePage() {
               </Row>
 
               <p style={{ margin: "8px 0", color: "var(--muted)" }}>
-                預估碳排量：{(isFinite(emission) ? emission : 0).toFixed(2)} kg
-                CO₂e
+                預估碳排量：
+                {(isFinite(emission) ? emission : 0).toFixed(2)} kg CO₂e
               </p>
 
               <HistoryBox>
@@ -874,7 +1214,7 @@ export default function ProductLifeCyclePage() {
                     <HistoryRow key={idx}>
                       <span>
                         {r.material} × {r.amount}
-                        {r.unit}（{r.emission} kg）
+                        {r.unit ? ` ${r.unit}` : ""}（{r.emission} kg）
                       </span>
                       <SmallMuted>
                         {r.timestamp
@@ -895,7 +1235,6 @@ export default function ProductLifeCyclePage() {
         </Modal>
       )}
 
-      {/* ===== 標的設定 Modal ===== */}
       {!readOnly && (
         <Modal
           open={targetModalOpen}
@@ -976,7 +1315,10 @@ export default function ProductLifeCyclePage() {
                 <Input
                   value={editingTarget.note ?? ""}
                   onChange={(e) =>
-                    setEditingTarget({ ...editingTarget, note: e.target.value })
+                    setEditingTarget({
+                      ...editingTarget,
+                      note: e.target.value,
+                    })
                   }
                 />
 
@@ -1142,7 +1484,6 @@ const Fill = styled.div`
   flex: 1;
 `;
 
-/* Stat cards */
 const StatGrid = styled.div`
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1195,7 +1536,6 @@ const Table = styled.table`
   }
 `;
 
-/* Modal body primitives */
 const ModalBody = styled.div`
   width: 100%;
   max-width: 560px;

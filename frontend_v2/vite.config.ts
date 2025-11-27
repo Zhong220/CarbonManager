@@ -14,6 +14,9 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:5001",
         changeOrigin: true,
+        // ✅ 保持你原本的設定：把前綴 /api 拿掉再轉給後端
+        //   /api/auth/login   → 後端收到 /auth/login
+        //   /api/products/... → 後端收到 /products/...
         rewrite: (p) => p.replace(/^\/api/, ""),
       },
     },
