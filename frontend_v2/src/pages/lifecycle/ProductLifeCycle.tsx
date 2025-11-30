@@ -4,7 +4,6 @@ import {
   apiListFactorsByTag,
   apiListStages,
   apiListEmissionsByProduct,
-  apiUpdateEmissionQuantity,
   apiListStepsByStage,
   apiSaveStepOrder,
   FactorDTO,
@@ -517,7 +516,7 @@ export default function ProductLifeCyclePage() {
     });
   };
 
-  // ★★★ 重點修正區：避免重複 INSERT 造成 duplicate 'product-stage' ★★★
+  // ★★★ 重點修正區：每次都是「新增一筆 emission」，不再合併同 stage ★★★
   const handleSaveRecord = async () => {
     if (readOnly || !selectedStep) return;
     const amt = parseFloat(inputAmount);
@@ -531,7 +530,7 @@ export default function ProductLifeCyclePage() {
     const pidNum = Number(productId);
     const emissionValue = +(parsedCoefficient * amt).toFixed(3);
 
-    console.log("[emission] prepare save", {
+    console.log("[emission] create new (always POST)", {
       productId: pidNum,
       stageId: selectedStep.stageId,
       factorId: selectedMaterial.id,
@@ -539,142 +538,54 @@ export default function ProductLifeCyclePage() {
       emissionValue,
     });
 
-    // 1) 先從目前前端 records 找「同階段、已寫進 DB 的紀錄」
-    let existing:
-      | {
-          emissionId: number;
-          amount: number;
-          emission: number;
-        }
-      | undefined;
-
-    const fromRecords = records.find(
-      (r) =>
-        r.stageId === selectedStep.stageId &&
-        !Number.isNaN(Number(r.id)) // 確保是 DB 回來的 id（數字）
-    );
-    if (fromRecords) {
-      existing = {
-        emissionId: Number(fromRecords.id),
-        amount: fromRecords.amount ?? 0,
-        emission: Number(fromRecords.emission) || 0,
-      };
-    }
-
-    // 2) 如果 records 裡找不到，再去後端 list 一次，用 mapEmissionToLifeRecord 比對 stageId
-    if (!existing) {
-      try {
-        const list = await apiListEmissionsByProduct(pidNum);
-        for (const row of list || []) {
-          const mapped = mapEmissionToLifeRecord(row as any);
-          if (mapped.stageId === selectedStep.stageId) {
-            existing = {
-              emissionId: Number(row.id),
-              amount: mapped.amount ?? 0,
-              emission: Number(mapped.emission) || 0,
-            };
-            break;
-          }
-        }
-      } catch (e) {
-        console.warn(
-          "[emissions] 檢查既有紀錄失敗，將視為尚未建立，直接嘗試建立",
-          e
-        );
-      }
-    }
+    const newItem: LifeRecord = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      productId: productId!,
+      stageId: selectedStep.stageId,
+      stepId: selectedStep.step.id,
+      stepLabel: selectedStep.step.label,
+      tag: selectedStep.step.tag,
+      material: factorName,
+      amount: amt,
+      unit: selectedMaterial.unit || "",
+      emission: emissionValue,
+      timestamp: nowTs,
+      date: new Date(nowTs * 1000).toISOString(),
+    };
 
     const prevRecords = records.slice();
+    setRecords((prev) => [...prev, newItem]);
 
     try {
-      if (existing) {
-        // ★ 已存在同 stage 的 emission：累加數量與排放，呼叫 UPDATE，而不是再 CREATE
-        const currQty = existing.amount || 0;
-        const currEm = existing.emission || 0;
+      console.log("[emission] POST /emissions payload", {
+        fixedStage: selectedStep.stageId,
+        step_tag: newItem.tag,
+        name:
+          customMaterialName || selectedMaterial?.name || newItem.material,
+        factor_id: selectedMaterial?.id ?? null,
+        quantity: amt,
+        material: newItem.material,
+        amount: newItem.amount,
+        emission_amount: Number(newItem.emission) || 0,
+        timestamp: newItem.timestamp ?? null,
+        date: newItem.date ?? null,
+        note: null,
+      });
 
-        const nextQty = +(currQty + amt).toFixed(6);
-        const nextEm = +(currEm + emissionValue).toFixed(6);
-
-        setRecords((prev) =>
-          prev.map((r) =>
-            r.id === String(existing!.emissionId)
-              ? {
-                  ...r,
-                  amount: nextQty,
-                  emission: nextEm,
-                  timestamp: nowTs,
-                  date: new Date(nowTs * 1000).toISOString(),
-                }
-              : r
-          )
-        );
-
-        console.log("[emission] update existing", {
-          emissionId: existing.emissionId,
-          nextQty,
-          nextEm,
-        });
-
-        await apiUpdateEmissionQuantity(Number(existing.emissionId), {
-          new_amount: nextQty,
-          new_emission_amount: nextEm,
-          new_total_emission: nextEm,
-          quantity: nextQty,
-          emission_amount: nextEm,
-          total_emission: nextEm,
-        });
-      } else {
-        // ★ 尚無同 stage 紀錄：這才真的呼叫 CREATE，避免撞 unique key
-        const newItem: LifeRecord = {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          productId: productId!,
-          stageId: selectedStep.stageId,
-          stepId: selectedStep.step.id,
-          stepLabel: selectedStep.step.label,
-          tag: selectedStep.step.tag,
-          material: factorName,
-          amount: amt,
-          unit: selectedMaterial.unit || "",
-          emission: emissionValue,
-          timestamp: nowTs,
-          date: new Date(nowTs * 1000).toISOString(),
-        };
-
-        setRecords((prev) => [...prev, newItem]);
-
-        console.log("[emission] create new → POST", {
-          productId: pidNum,
-          payload: {
-            fixedStage: selectedStep.stageId,
-            step_tag: newItem.tag,
-            name:
-              customMaterialName || selectedMaterial?.name || newItem.material,
-            factor_id: selectedMaterial?.id ?? null,
-            quantity: amt,
-            material: newItem.material,
-            amount: newItem.amount,
-            emission_amount: Number(newItem.emission) || 0,
-            timestamp: newItem.timestamp ?? null,
-            date: newItem.date ?? null,
-            note: null,
-          },
-        });
-
-        await apiCreateEmission(pidNum, {
-          fixedStage: selectedStep.stageId,
-          step_tag: newItem.tag,
-          name:
-            customMaterialName || selectedMaterial?.name || newItem.material,
-          factor_id: selectedMaterial?.id ?? null,
-          quantity: amt,
-          material: newItem.material,
-          amount: newItem.amount,
-          emission_amount: Number(newItem.emission) || 0,
-          timestamp: newItem.timestamp ?? null,
-          date: newItem.date ?? null,
-          note: null,
-        });
-      }
+      await apiCreateEmission(pidNum, {
+        fixedStage: selectedStep.stageId,
+        step_tag: newItem.tag,
+        name:
+          customMaterialName || selectedMaterial?.name || newItem.material,
+        factor_id: selectedMaterial?.id ?? null,
+        quantity: amt,
+        material: newItem.material,
+        amount: newItem.amount,
+        emission_amount: Number(newItem.emission) || 0,
+        timestamp: newItem.timestamp ?? null,
+        date: newItem.date ?? null,
+        note: null,
+      });
 
       // 再重抓一次後端資料，確認 DB 的真實狀態
       try {
