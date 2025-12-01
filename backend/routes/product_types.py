@@ -14,7 +14,7 @@ from routes.products import product_types_products_bp
 from routes.helpers import(
     display_id, 
     parse_display_id,
-    _is_shop,
+    # _is_shop,
     _validate_name,
     json_response
 )
@@ -28,7 +28,7 @@ def add_type():
     uid = int(get_jwt_identity())
     org = get_user_organization(uid)
     if not org:
-        return json_response({"error 400": "user has no organization"}, 400)
+        return json_response({"status": "400: user has no organization"}, 400)
     data = request.get_json(force=True)
     name = data.get("name")
     err = _validate_name(name)
@@ -48,9 +48,9 @@ def add_type():
                 }
             , status=201)
     except IntegrityError:
-        return json_response({"error 409": "Product type with this name already exists"}, status=409)
+        return json_response({"status": "409: Product type with this name already exists"}, status=409)
     except Exception as e:
-        return json_response({"error": "Error creating product type, details: %e"}, e, 500)
+        return json_response({"status": "500: %e"}, e, 500)
 
 @product_types_bp.get("")
 @jwt_required()
@@ -59,7 +59,7 @@ def list_all():
     uid = int(get_jwt_identity())
     org = get_user_organization(uid)
     if not org:
-        return json_response({"error 400": "user has no organization"}, 400)
+        return json_response({"status": "400: user has no organization"}, 400)
     org_id = org["id"]
     try:
         pts = list_product_types(org_id)
@@ -69,7 +69,7 @@ def list_all():
             row.pop("id", None)
         return json_response(product_types=pts), 200
     except Exception as e:
-        return json_response({"error 500": f"{e}"}, 500)
+        return json_response({"status": f"500: {e}"}, 500)
 
 @product_types_bp.put("/<string:product_type_id>")
 @jwt_required()
@@ -78,20 +78,20 @@ def update_pt(product_type_id):
     uid = int(get_jwt_identity())
     org = get_user_organization(uid)
     if not org:
-        return json_response({"error 400": "user has no organization"}, 400)
+        return json_response({"status": "400: user has no organization"}, 400)
     org_id = org["id"]
     data = request.get_json()
     new_name = (data.get("name") or "").strip()
     if not new_name:
-        return json_response({"error 400": "New name must be provided"}, 400)
+        return json_response({"status": "400: New name must be provided"}, 400)
     try:
         success = modify_product_type(new_name, org_id, product_type_id_int)
         if success:
-            return json_response({"msg": "Product type updated"}, 200)
+            return json_response({"status": "200: Product type updated"}, 200)
         else:
-            return json_response({"msg": "Product type not found"}, 404)
+            return json_response({"status": "404: Product type not found"}, 404)
     except Exception as e:
-        return json_response({"error 500": f"{e}"}, 500)
+        return json_response({"status": f"500: {e}"}, 500)
 
 @product_types_bp.delete("/<string:product_type_id>")
 @jwt_required()
@@ -99,7 +99,7 @@ def delete_pt(product_type_id):
     uid = int(get_jwt_identity())
     org = get_user_organization(uid)
     if not org:
-        return jsonify(error="user has no organization"), 400
+        return json_response({"status": "400: user has no organization"}, 400)
     org_id = org["id"]
     try:
         product_type_id_int = parse_display_id(product_type_id, "PT")
@@ -115,9 +115,9 @@ def delete_pt(product_type_id):
                 }, 200)
 
         else:
-            return json_response({"error 404": "Product type not found"}, 404)
+            return json_response({"status": "404: Product type not found"}, 404)
     except Exception as e:
-        return json_response({"error 500": f"{e}"}, 500)
+        return json_response({"status": f"500: {e}"}, 500)
 
 
 # -------- By id: Get a product type ----------
@@ -137,6 +137,6 @@ def get_pt(product_type_id):
             pt.pop("id", None)
             return json_response(product_type=pt), 200
         else:
-            return json_response({"error 404": "Product type not found"}, 404)
+            return json_response({"status": "404: Product type not found"}, 404)
     except Exception as e:
-        return json_response({"error 500": f"{e}"}, 500)
+        return json_response({"status": f"500: {e}"}, 500)

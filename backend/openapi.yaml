@@ -335,7 +335,7 @@ paths:
                     example: 1
 
         "400":
-          description: Invalid input
+          description: Invalid input   
         "401":
           description: Unauthorized
         "409":
