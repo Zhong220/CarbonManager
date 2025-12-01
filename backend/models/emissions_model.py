@@ -74,8 +74,8 @@ def create_emission(
     if not factor:
         raise ValueError(f"factor_id={factor_id} does not exist")
 
-    coeff = factor["coefficient"] or 0
-    qty = quantity or 0
+    coeff = factor["coefficient"]
+    qty = quantity 
     emission_amount = qty * coeff
 
     with get_db() as conn:
@@ -103,10 +103,10 @@ def create_emission(
                 unit_target_amount
             )
             VALUES (
-                %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s 
             )
         """
         values = (

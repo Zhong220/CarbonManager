@@ -104,7 +104,13 @@ def delete_product_type(organization_id: str, product_type_id: int) -> bool:
 def get_product_type_by_id(organization_id: int, product_type_id: int) -> dict | None:
     sql = """
         SELECT
-            P.id, P.name, P.created_at, P.organization_id, P.updated_at, O.name AS organization_name
+            P.id, 
+            P.name, 
+            P.organization_id, 
+            P.created_at, 
+            P.updated_at,
+            P.order_id, 
+            O.name AS organization_name
         FROM product_types AS P
         JOIN organizations AS O ON O.id = P.organization_id
         WHERE P.organization_id = %s AND P.id = %s

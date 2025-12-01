@@ -43,7 +43,7 @@ def create(product_id):
     factor_id = data.get("factor_id")
     tag_id = data.get("tag_id")
     quantity = data.get("quantity")
-    step_id = data.get("step_id")
+    step_id = data.get("step_id") 
     created_by = uid
     create_emission(
             name,
@@ -53,8 +53,7 @@ def create(product_id):
             quantity,
             tag_id,
             step_id,
-            created_by
-            # ... other optional parameters can be added here as needed
+            created_by,
     )
     return jsonify({"message": "Emission record created"}), 201
 
