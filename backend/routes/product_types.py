@@ -87,9 +87,9 @@ def update_pt(product_type_id):
     try:
         success = modify_product_type(new_name, org_id, product_type_id_int)
         if success:
-            return json_response(msg="Product type updated"), 200
+            return json_response({"msg": "Product type updated"}, 200)
         else:
-            return json_response(msg="Product type not found"), 404
+            return json_response({"msg": "Product type not found"}, 404)
     except Exception as e:
         return json_response({"error 500": f"{e}"}, 500)
 

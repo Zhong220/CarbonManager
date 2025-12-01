@@ -33,13 +33,13 @@ def register():
     org_name = (data.get("organization_name") or "").strip() if user_type == "shop" else None
 
     if not account or not password or not user_name:
-        return json_response({"error": "account, password, and user_name are required"}, status=400)
+        return json_response({"status": "account, password, and user_name are required"}, status=400)
     if user_type not in ("customer", "shop"):
-        return json_response({"error":"invalid user_type"}, status=400)
+        return json_response({"status":"invalid user_type"}, 400)
     if user_type == "shop" and not org_name:
-        return json_response({"error": "org_name required for shop registration"}, status=400)
+        return json_response({"status": "org_name required for shop registration"}, 400)
     if get_user_by_account(account):
-        return json_response({"error": "account already registered"}, status=409)
+        return json_response({"status": "account already registered"}, 409)
 
     # Shop Owners
     org_id = None
@@ -67,9 +67,7 @@ def register():
             "user_name": user_name,
             "role": user_type,
             "organization_id": display_id("organizations", org_id)
-            },
-        status=201,
-    )
+            },201)
     
 @auth_bp.post("/login")
 def login():
@@ -101,9 +99,7 @@ def login():
             "refresh_token": tokens["refresh_token"],
             "role":user["user_type"],
             "organization_id": display_id("users", user["organization_id"]),
-            }, 
-        status=200,
-    )
+            }, 200,)
 
 @auth_bp.post("/refresh")
 @jwt_required(refresh=True)
@@ -117,7 +113,7 @@ def refresh():
     new_access = create_access_token(
         identity=user_id, additional_claims={"account": account, "user_type": user_type}
     )
-    return json_response({"access_token": new_access}, status=200)
+    return json_response({"access_token": new_access}, 200)
 
 @auth_bp.get("/me")
 @jwt_required()
@@ -133,8 +129,7 @@ def me():
             "email_account": user["email_account"], 
             "user_type": user["user_type"],
             "organization_id": display_id("organizations", user["organization_id"]),    
-        }, 
-        status=200)
+        }, 200)
 
 @auth_bp.put("/me")
 @jwt_required()
@@ -153,15 +148,7 @@ def update_me():
         if not org:
             return json_response({"error 404": "organization not found"}, 404)
         assign_user_to_org(user_id, org["id"])
-    return json_response(
-        {
-            "user_id": display_id("users", user["id"]),
-            "user_name": user["name"],
-            "email_account": user["email_account"], 
-            "user_type": new_user_type,
-            "organization_name": new_org_name,    
-        }, 
-        status=200)
+    return json_response({"status": "200: update successfully"}, 200)
 
 @auth_bp.delete("/me")
 @jwt_required()
@@ -169,7 +156,7 @@ def delete_me():
     user_id = int(get_jwt_identity())
     user = get_user_by_id(user_id)
     if not user:
-        return json_response({"error 404": "user not found"}, 404)
+        return json_response({"status": "404: user not found"}, 404)
     delete_user(user_id)
-    return json_response({"status message 200": "user deleted"}, 200)
+    return json_response({"status": "200: user deleted"}, 200)
 
