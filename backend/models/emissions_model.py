@@ -222,3 +222,4 @@ def get_emission_summary(product_id: int):
         "by_stage": by_stage,
         "by_category": by_category,
     }
+    

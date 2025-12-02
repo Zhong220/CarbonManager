@@ -5,7 +5,7 @@ from flask import Response
 
 PREFIXES = {
     "users": "USR",
-    "product_types": "PT",
+    "product_types": "PRT",
     "products": "PRD",
     "emissions": "EMS",
     "stages": "STG",

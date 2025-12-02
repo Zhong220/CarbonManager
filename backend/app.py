@@ -11,6 +11,7 @@ from routes.product_types import product_types_bp
 from routes.products import product_bp
 from routes.factor import factor_bp
 from routes.emissions import emission_bp
+from routes.report import report_bp
 
 load_dotenv()
 jwt = JWTManager()
@@ -18,11 +19,14 @@ jwt = JWTManager()
 
 def create_app(config_class=Config):
     app = Flask(__name__)
+    
     app.config.from_object(config_class)  # Load configuration
-    app.config["JSON_SORT_KEYS"] = False  # still ok for older Flask
-    # For Flask 3 / new JSON provider:
-    app.json.sort_keys = False
-
+    app.config["REPORT_TEMPLATE"] = os.path.join(
+        app.root_path, "report", "report_template.xlsx"
+    )
+    app.config["REPORT_RECORDS_DIR"] = os.path.join(
+        app.root_path, "report", "records"
+    )
     jwt.init_app(app)  
 
     # register blueprints
@@ -32,9 +36,8 @@ def create_app(config_class=Config):
     app.register_blueprint(product_bp)
     app.register_blueprint(factor_bp)
     app.register_blueprint(emission_bp) 
-    print("JSON_SORT_KEYS =", app.config.get("JSON_SORT_KEYS"))
-    print("app.json.sort_keys =", app.json.sort_keys)
-       
+    app.register_blueprint(report_bp)
+    
     # --------- Swagger ---------
     @app.route("/openapi.yaml")  # Serve raw OpenAPI file
     def openapi_yaml():
@@ -59,13 +62,8 @@ def create_app(config_class=Config):
     # Run Swagger UI at root
     @app.route("/")
     def docs():
-        
         return SWAGGER_HTML
 
-    @app.route("/health")  # Health check route
-    def health():
-        return jsonify(ok=True), 200
-    
     # List existing routes
     @app.route("/_routes")
     def list_routes():

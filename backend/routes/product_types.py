@@ -20,7 +20,7 @@ from routes.helpers import(
 )
 
 product_types_bp = Blueprint("product_types", __name__, url_prefix="/product_types")  
-product_types_bp.register_blueprint(product_types_products_bp, url_prefix="/<int:type_id>") 
+product_types_bp.register_blueprint(product_types_products_bp, url_prefix="/<string:product_type_id>") 
 
 @product_types_bp.post("")
 @jwt_required()
@@ -62,19 +62,22 @@ def list_all():
         return json_response({"status": "400: user has no organization"}, 400)
     org_id = org["id"]
     try:
-        pts = list_product_types(org_id)
-        for row in pts:
-            row["product_type_id"] = display_id("product_types", row["id"])
-            row["organization_id"] = display_id("organizations", row["organization_id"])
-            row.pop("id", None)
-        return json_response(product_types=pts), 200
+        rows = list_product_types(org_id) 
+        prts = []
+        for row in rows:
+            prts.append({
+                "product_type_id": display_id("product_types", row["id"]),
+                "product_type_name": row["name"],
+                "organization_id": display_id("organizations", row["organization_id"]),
+            })
+        return json_response(prts, 200)
     except Exception as e:
         return json_response({"status": f"500: {e}"}, 500)
 
 @product_types_bp.put("/<string:product_type_id>")
 @jwt_required()
 def update_pt(product_type_id):
-    product_type_id_int = parse_display_id(product_type_id, "PT")
+    product_type_id_int = parse_display_id(product_type_id, "PRT")
     uid = int(get_jwt_identity())
     org = get_user_organization(uid)
     if not org:
@@ -102,7 +105,7 @@ def delete_pt(product_type_id):
         return json_response({"status": "400: user has no organization"}, 400)
     org_id = org["id"]
     try:
-        product_type_id_int = parse_display_id(product_type_id, "PT")
+        product_type_id_int = parse_display_id(product_type_id, "PRT")
         pt = get_product_type_by_id(org_id, product_type_id_int)
         success = delete_product_type(org_id, product_type_id_int)
         if success:
@@ -130,12 +133,17 @@ def get_pt(product_type_id):
         return json_response({"error 400": "user has no organization"}, 400)
     org_id = org["id"]
     try:
-        pt = get_product_type_by_id(org_id, parse_display_id(product_type_id, "PT"))
+        pt = get_product_type_by_id(org_id, parse_display_id(product_type_id, "PRT"))
         if pt:
-            pt["product_type_id"] = product_type_id
-            pt["organization_id"] = display_id("organizations", org["id"])
-            pt.pop("id", None)
-            return json_response(product_type=pt), 200
+            return json_response({
+                "product_type_id": display_id("product_types", pt["id"]),
+                "product_type_name": pt["name"],
+                "organization_id": display_id("organizations", pt["organization_id"]),
+                "organization_name": pt["organization_name"],
+                "created_at": pt["created_at"].isoformat(), 
+                "updated_at": pt["updated_at"].isoformat(),
+                "order_id": pt["order_id"]
+                }, 200)
         else:
             return json_response({"status": "404: Product type not found"}, 404)
     except Exception as e:

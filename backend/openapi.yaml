@@ -20,7 +20,7 @@ paths:
         - in: path
           name: emission_id
           required: true
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
       responses:
         "201":
           description: Created
@@ -181,7 +181,7 @@ paths:
                   role:
                     type: string
                   current_organization_id:
-                    type: integer
+                    type: string
         "400":
           description: Invalid input
         "401":
@@ -473,7 +473,7 @@ paths:
         - name: product_type_id
           in: path
           required: true
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
       requestBody:
         required: true
         content:
@@ -530,7 +530,7 @@ paths:
                 type: object
                 properties:
                   product_id:
-                    type: integer
+                    type: string
                     example: PD1
                   product_name:
                     type: string
@@ -725,8 +725,8 @@ paths:
                 items:
                   type: object
                   properties:
-                    id:
-                      type: integer
+                    emission_id:
+                      type: string
                     amount:
                       type: number
                       format: float
@@ -756,6 +756,15 @@ paths:
             schema:
               type: object
               properties:
+                name:
+                  type: string
+                  example: 原料採購-瓶裝水
+                step_id:
+                  type: string
+                  example: STP1
+                tag_id:
+                  type: string
+                  example: TAG1
                 stage_id:
                   type: string 
                   example: raw
@@ -768,7 +777,7 @@ paths:
                 unit:
                   type: string
                   example: 瓶
-                amount:
+                quantity:
                   type: number
                   format: float
                   example: 2
@@ -1037,3 +1046,22 @@ paths:
                           type: string
                         announcement_year:
                           type: integer
+  /report/{product_id}:
+    get:
+      summary: 
+        Download Excel report for a product
+      parameters:
+        - in: path
+          name: product_id
+          required: true
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      responses:
+        200:
+            description: Excel file
+        400:
+          description: Bad request
+        401:
+          description: Unauthorized

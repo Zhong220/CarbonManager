@@ -54,7 +54,7 @@ def create(product_id):
     uid = int(get_jwt_identity())
     data = request.get_json()
     name = data.get("name")
-    stage_id = parse_display_id(data.get("stage_id"), "STG")
+    stage_id = data.get("stage_id")
     tag_id = parse_display_id(data.get("tag_id"), "TAG")
     step_id = parse_display_id(data.get("step_id"), "STP") 
     factor_id = data.get("factor_id")
@@ -62,7 +62,7 @@ def create(product_id):
     created_by = uid
     create_emission(
             name,
-            parse_display_id(product_id),
+            parse_display_id(product_id, "PRD"),
             stage_id,
             factor_id,
             quantity,
