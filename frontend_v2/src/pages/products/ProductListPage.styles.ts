@@ -1,21 +1,35 @@
-// frontend_v2\src\pages\products\ProductListPage.styles.ts
+// frontend_v2/src/pages/products/ProductListPage.styles.ts
 import styled from "styled-components";
 
 export const PageWrapper = styled.div`
   background: #e9eee8; /* 跟歡迎頁一致 */
   min-height: 100vh;
-  max-width: 480px;
-  margin: 0 auto;
+
+  /* 取消中間那條欄寬，直接吃滿整個畫面 */
+  width: 100%;
+  margin: 0;
+
+  /* 讓內容跟邊緣保留一點距離（手機／桌機通用） */
+  padding: 12px 16px 80px;
+  box-sizing: border-box;
+
   position: relative;
+  display: flex;
+  flex-direction: column;
 `;
 
 export const TopBar = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px;
+
+  padding: 12px 16px;
+  margin-bottom: 8px;
+
   background: #fff;
   border-bottom: 1px solid #dfe4db;
+  border-radius: 16px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
 
   h2 {
     margin: 0;
@@ -34,11 +48,11 @@ export const TopBar = styled.div`
 export const Hint = styled.div`
   font-size: 14px;
   color: #4f5b45; /* 跟 Subtitle 類似 */
-  padding: 8px 16px;
+  padding: 4px 4px 8px;
 `;
 
 export const List = styled.div`
-  padding: 16px;
+  padding: 8px 0 16px;
 `;
 
 export const ProductCard = styled.div`

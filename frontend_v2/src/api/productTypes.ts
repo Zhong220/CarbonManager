@@ -113,7 +113,7 @@ export async function apiDeleteProductType(id: number): Promise<void> {
  * Strategy:
  *   1) 先 list
  *   2) 有名稱包含 "default" 的就用那個
- *   3) 沒有就嘗試建立 "Default Type"
+ *   3) 沒有就嘗試建立 ""
  *   4) 建立時若撞到 409（已存在），再 list 一次找同名的
  */
 export async function apiGetOrCreateDefaultType(): Promise<ProductType> {
@@ -121,7 +121,7 @@ export async function apiGetOrCreateDefaultType(): Promise<ProductType> {
 
   const defaultLike =
     list.find((t) => (t.name || "").toLowerCase().includes("default")) ||
-    findByName(list, "Default Type") ||
+    findByName(list, "未分類") ||
     list[0];
 
   if (defaultLike) return defaultLike;
@@ -130,7 +130,7 @@ export async function apiGetOrCreateDefaultType(): Promise<ProductType> {
   // - A: list → 沒有 → create ⇒ 201
   // - B: list → 沒有 → create ⇒ 409 (名稱已存在)
   // 所以上面的 apiCreateProductType 已經把 409 當成「去抓現有那一筆」處理好了。
-  return apiCreateProductType({ name: "Default Type" });
+  return apiCreateProductType({ name: "未分類" });
 }
 
 export type { ProductType as ProductTypeDTO };

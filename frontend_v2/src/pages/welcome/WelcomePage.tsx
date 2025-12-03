@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import Modal from "@/ui/components/Modal";
 import { PrimaryButton, GhostButton } from "@/ui/primitives/Button";
 import { Field, FormActions } from "@/ui/primitives/Form";
-import { Container } from "@/ui/primitives/Layout";
+// import { Container } from "@/ui/primitives/Layout";
 import * as S from "./WelcomePage.styles";
 import { useNavigate } from "react-router-dom";
 
@@ -25,33 +25,32 @@ export default function WelcomePage() {
 
   return (
     <S.Bg>
-      <div className="PageShell">
-        <Container max="md">
-          <S.Card role="region" aria-label="歡迎頁">
-            <S.Hero
-              src="/images/tea_v2.png"
-              srcSet="/images/tea_v2.png 960w, /images/tea_v2.png 1920w"
-              sizes="(max-width: 768px) 92vw, 960px"
-              alt="茶園風景"
-              loading="eager"
-            />
+      {/* 中央卡片 */}
+      <S.Card role="region" aria-label="歡迎頁">
+        <S.Hero
+          src="/images/tea_v2.png"
+          srcSet="/images/tea_v2.png 960w, /images/tea_v2.png 1920w"
+          sizes="(max-width: 768px) 92vw, 960px"
+          alt="茶園風景"
+          loading="eager"
+        />
 
-            <S.Title>茶葉商品碳足跡管理平台</S.Title>
-            <S.Subtitle>
-              管理並追蹤您的茶葉產品與記錄其碳足跡，讓消費者與茶行攜手打造綠色的未來。
-            </S.Subtitle>
-            <S.Actions>
-              <PrimaryButton onClick={() => setOpen("login")}>登入</PrimaryButton>
-              <GhostButton onClick={() => setOpen("signup")}>註冊</GhostButton>
-            </S.Actions>
-          </S.Card>
+        <S.Title>茶葉商品碳足跡管理平台</S.Title>
+        <S.Subtitle>
+          管理並追蹤您的茶葉產品與記錄其碳足跡，讓消費者與茶行攜手打造綠色的未來。
+        </S.Subtitle>
 
-          <S.FooterHint>
-            <small>© {new Date().getFullYear()} 碳足跡管理平台</small>
-          </S.FooterHint>
-        </Container>
-      </div>
+        <S.Actions>
+          <PrimaryButton onClick={() => setOpen("login")}>登入</PrimaryButton>
+          <GhostButton onClick={() => setOpen("signup")}>註冊</GhostButton>
+        </S.Actions>
 
+        <S.FooterHint>
+          <small>© {new Date().getFullYear()} 碳足跡管理平台</small>
+        </S.FooterHint>
+      </S.Card>
+
+      {/* 登入 / 註冊 Modal */}
       <Modal
         open={!!open}
         onClose={() => setOpen(null)}
@@ -82,8 +81,8 @@ function LoginForm({ onDone }: { onDone: () => void }) {
     setLoading(true);
     try {
       await login(account, password); // 成功會寫 token + me
-      onDone();                       // 關閉 Modal
-      navigate("/products");          // 直接跳商品頁
+      onDone(); // 關閉 Modal
+      navigate("/products"); // 直接跳商品頁
     } catch (err: any) {
       setError(err?.message || "登入失敗");
     } finally {
@@ -169,8 +168,8 @@ function SignupForm({ onDone }: { onDone: () => void }) {
         role,
         user_name: userName,
         organization_name: role === "shop" ? shopName : undefined,
-      });               // 成功會寫 token + me
-      onDone();         // 關閉 Modal
+      }); // 成功會寫 token + me
+      onDone(); // 關閉 Modal
       navigate("/products"); // 直接跳商品頁
     } catch (err: any) {
       setError(err?.message || "註冊失敗");
