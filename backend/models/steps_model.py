@@ -25,4 +25,3 @@ def create_steps( product_id, stage_id, tag_id, name, sort_order):
         cursor.execute(sql, (product_id, stage_id, tag_id, name, sort_order, ))
         db.commit()
         return cursor.lastrowid
-

@@ -56,11 +56,22 @@ services:
       - "5001:5000"
     volumes:
       - ./backend:/app
-    command: ["python", "run.py"]
+    command: ["python", "app.py"]
     restart: unless-stopped
     networks:
       - carbonmanager_net
-
+  
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #     args:
+  #       VITE_API_BASE_URL: /api
+  #   container_name: carbon-manager-frontend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"        
+      
   chain-service:
     build:
       context: ./chain-service

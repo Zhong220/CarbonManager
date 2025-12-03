@@ -3,7 +3,6 @@ import json
 from typing import Optional
 from db_connection import get_db
 
-# -------------- CREATE A PRODUCT ---------------
 def create_product(organization_id: int, type_id: int, name: str, serial_number: Optional[str], code: Optional[str]) -> int:
     sql = """
         INSERT INTO products 
@@ -23,7 +22,6 @@ def create_product(organization_id: int, type_id: int, name: str, serial_number:
         finally:
             cur.close()
 
-# ----- GET ALL PRODUCT UNDER ONE PRODUCT TYPES OF ONE ORG ---------------
 def list_products( organization_id: int, product_type_id: int ) -> list[dict]:
     sql = """
         SELECT 
