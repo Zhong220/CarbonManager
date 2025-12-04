@@ -30,11 +30,34 @@ function mapRole(userType?: "shop" | "customer" | null) {
   return "None";
 }
 
-function pickTypeId(created: any): number | null {
-  const id =
-    created?.id ?? created?.product_type?.id ?? created?.data?.id ?? null;
-  const n = Number(id);
-  return Number.isFinite(n) && n > 0 ? n : null;
+// 從後端的 ProductType 物件裡抓「真正用來打 API 的 id」（例如 PRT1）
+function getTypeDisplayId(t: ProductType): string {
+  const anyT = t as any;
+
+  const raw =
+    anyT.product_type_id ?? // 後端常用欄位
+    anyT.display_id ?? // 若有額外 display_id 欄位
+    anyT.id ?? // 退而求其次，舊版可能放在 id
+    null;
+
+  return raw != null ? String(raw) : "";
+}
+
+// 建立 / 新增類型 API 回傳時，從回傳物件裡抽出 display id
+function extractTypeDisplayId(created: any): string | null {
+  if (!created) return null;
+  const anyC = created as any;
+
+  const raw =
+    anyC.product_type_id ??
+    anyC.id ??
+    anyC.product_type?.id ??
+    anyC.data?.product_type_id ??
+    anyC.data?.id ??
+    null;
+
+  if (raw == null) return null;
+  return String(raw);
 }
 
 function ensureArray<T>(v: any): T[] {
@@ -46,15 +69,17 @@ function ensureArray<T>(v: any): T[] {
 }
 
 // 顯示給使用者看的分類名稱：把 Default Type / Uncategorized 都顯示成「未分類」
-function displayTypeName(name: string) {
+function displayTypeName(name?: string) {
+  if (!name) return "未分類";
   if (name === "Default Type" || name === "Uncategorized") return "未分類";
   return name;
 }
 
-type TidLike = number | "__all" | null;
+// typeId：要嘛是 "__all"，要嘛是像 "PRT1" 這種字串
+type TidLike = "__all" | string;
 
-// 在前端多加一個 _typeId，記錄這個商品屬於哪個分類
-type ProductRow = UIProduct & { _typeId?: number };
+// 在前端多加一個 _typeId（字串），記錄這個商品屬於哪個分類（例如 "PRT1"）
+type ProductRow = UIProduct & { _typeId?: string };
 
 export default function ProductListPage() {
   const { user, isAuthed } = useUser();
@@ -68,21 +93,32 @@ export default function ProductListPage() {
 
   // ---------- 類型清單 & 目前篩選 ----------
   const [typeOptions, setTypeOptions] = useState<ProductType[]>([]);
-  const [resolvedTid, setResolvedTid] = useState<TidLike>("__all"); // 預設顯示「所有商品」
+  const [resolvedTid, setResolvedTid] = useState<TidLike>("__all");
   const loadingTypesRef = useRef(false);
 
-  // ✅ 進頁面先把不合法網址導回 /products/__all
+  // URL 上的 typeId => 內部統一成 TidLike
   useEffect(() => {
     const urlTid = params.typeId;
-    const n = Number(urlTid);
-    const looksNumber = Number.isFinite(n) && n > 0;
-    if (urlTid !== "__all" && !looksNumber) {
-      navigate("/products/__all", { replace: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // 先載入「類型清單」，若為空且可編輯 → 自動補建 Default，再決定 tid
+    if (!urlTid) {
+      // 沒有給 typeId，就導到 /products/__all
+      setResolvedTid("__all");
+      navigate("/products/__all", { replace: true });
+      return;
+    }
+
+    if (urlTid === "__all") {
+      setResolvedTid("__all");
+      return;
+    }
+
+    // 其他字串（例如 PRT1）就暫時先吃進來，後面載完 typeOptions 再檢查是否合法
+    setResolvedTid(urlTid);
+  }, [params.typeId, navigate]);
+
+  const tid: TidLike = resolvedTid;
+
+  // 先載入「類型清單」，若為空且可編輯 → 自動補建 Default
   useEffect(() => {
     let cancelled = false;
     if (loadingTypesRef.current) return;
@@ -91,6 +127,7 @@ export default function ProductListPage() {
     (async () => {
       try {
         let list = ensureArray<ProductType>(await apiListProductTypes());
+
         if (list.length === 0 && canEdit) {
           try {
             await apiGetOrCreateDefaultType();
@@ -99,32 +136,21 @@ export default function ProductListPage() {
             /* 可能已存在或權限受限，忽略 */
           }
         }
-        if (!cancelled) setTypeOptions(list);
 
-        const urlTid = params.typeId;
-
-        // 1) URL 指定 __all → 直接採用
-        if (urlTid === "__all") {
-          if (!cancelled) setResolvedTid("__all");
-          return;
-        }
-
-        // 2) URL 指定數字且存在於清單 → 採用該 tid
-        const urlTidNum = Number(urlTid);
-        if (
-          Number.isFinite(urlTidNum) &&
-          urlTidNum > 0 &&
-          list.some((t) => t.id === urlTidNum)
-        ) {
-          if (!cancelled) setResolvedTid(urlTidNum);
-          return;
-        }
-
-        // 3) 其他 → 導到「所有商品」
         if (!cancelled) {
-          setResolvedTid("__all");
-          if (urlTid !== "__all") {
-            navigate("/products/__all", { replace: true });
+          setTypeOptions(list);
+        }
+
+        // 如果目前 URL 上的 tid 不是 "__all"，檢查一下是否在清單中
+        if (!cancelled && tid !== "__all") {
+          const exists = list.some(
+            (t) => getTypeDisplayId(t) === tid
+          );
+          if (!exists) {
+            setResolvedTid("__all");
+            if (params.typeId !== "__all") {
+              navigate("/products/__all", { replace: true });
+            }
           }
         }
       } catch (err) {
@@ -144,23 +170,24 @@ export default function ProductListPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.typeId, canEdit, navigate]);
-
-  const tid = resolvedTid;
+  }, [canEdit, tid, params.typeId, navigate]);
 
   // ---------- 建立商品用的「類型」選擇 ----------
-  const [selectedType, setSelectedType] = useState<number | "__new" | null>(
-    null
-  );
+  const [selectedType, setSelectedType] = useState<string | "__new">("__new");
   const [newTypeName, setNewTypeName] = useState("");
 
+  // 根據目前 tid / 類型清單，更新「新增商品」對話框裡的預設類型
   useEffect(() => {
     if (!canEdit) return;
-    if (typeof tid === "number" && typeOptions.some((t) => t.id === tid)) {
+
+    if (tid !== "__all") {
       setSelectedType(tid);
-    } else if (typeOptions.length) {
-      setSelectedType(typeOptions[0].id);
+      return;
+    }
+
+    if (typeOptions.length) {
+      const firstId = getTypeDisplayId(typeOptions[0]);
+      setSelectedType(firstId || "__new");
     } else {
       setSelectedType("__new");
     }
@@ -170,25 +197,24 @@ export default function ProductListPage() {
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // __all 聚合抓取（加入「類型為空 → 補建 Default → 重抓」的後備）
+  // 依照目前 tid 載入商品清單
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       setLoading(true);
-
       try {
+        // 顯示「所有商品」：把所有 type 聚合起來
         if (tid === "__all") {
           let types = typeOptions;
 
-          // 類型仍為空 → 後備：嘗試補建 Default 再重抓一次
           if (types.length === 0 && canEdit) {
             try {
               await apiGetOrCreateDefaultType();
               types = ensureArray<ProductType>(await apiListProductTypes());
               if (!cancelled) setTypeOptions(types);
             } catch {
-              /* 忽略 */
+              /* ignore */
             }
           }
 
@@ -197,33 +223,48 @@ export default function ProductListPage() {
             return;
           }
 
-          // ✅ 這裡還是有 call API，只是對每個 type call 一次，再合併
-          const chunks = await Promise.all(
-            types.map((t) =>
-              apiListProducts(t.id).then((list) =>
-                list.map((p) => ({ ...p, _typeId: t.id } as ProductRow))
-              )
-            )
-          );
+          const promises = types
+            .map((t) => {
+              const typeId = getTypeDisplayId(t);
+              if (!typeId) return null;
+              return apiListProducts(typeId).then((list) =>
+                list.map(
+                  (p) =>
+                    ({
+                      ...p,
+                      _typeId: typeId,
+                    } as ProductRow)
+                )
+              );
+            })
+            .filter(
+              (x): x is Promise<ProductRow[]> => x !== null
+            );
+
+          if (promises.length === 0) {
+            if (!cancelled) setProducts([]);
+            return;
+          }
+
+          const chunks = await Promise.all(promises);
           const all = chunks.flat();
           if (!cancelled) setProducts(all);
           return;
         }
 
-        // 指定單一類型
-        if (typeof tid === "number" && tid > 0) {
-          const list = await apiListProducts(tid);
-          if (!cancelled) {
-            setProducts(
-              list.map(
-                (p) => ({ ...p, _typeId: tid } as ProductRow)
-              )
-            );
-          }
-          return;
+        // 指定單一類型（tid 為 PRTx）
+        const list = await apiListProducts(tid);
+        if (!cancelled) {
+          setProducts(
+            list.map(
+              (p) =>
+                ({
+                  ...p,
+                  _typeId: tid,
+                } as ProductRow)
+            )
+          );
         }
-
-        if (!cancelled) setProducts([]);
       } catch (e) {
         console.error("[ProductList] list products failed:", e);
         if (!cancelled) setProducts([]);
@@ -237,9 +278,11 @@ export default function ProductListPage() {
     };
   }, [tid, typeOptions, canEdit]);
 
+  // 重新載入商品清單（在新增 / 刪除 / 複製 / 改名後用）
   function refresh(tidOverride?: TidLike) {
-    const target = tidOverride ?? tid;
+    const target: TidLike = tidOverride ?? tid;
     if (!target) return;
+
     setLoading(true);
 
     if (target === "__all") {
@@ -248,37 +291,61 @@ export default function ProductListPage() {
         setLoading(false);
         return;
       }
-      Promise.all(
-        typeOptions.map((t) =>
-          apiListProducts(t.id).then((list) =>
-            list.map((p) => ({ ...p, _typeId: t.id } as ProductRow))
-          )
-        )
-      )
+
+      const promises = typeOptions
+        .map((t) => {
+          const typeId = getTypeDisplayId(t);
+          if (!typeId) return null;
+          return apiListProducts(typeId).then((list) =>
+            list.map(
+              (p) =>
+                ({
+                  ...p,
+                  _typeId: typeId,
+                } as ProductRow)
+            )
+          );
+        })
+        .filter(
+          (x): x is Promise<ProductRow[]> => x !== null
+        );
+
+      if (promises.length === 0) {
+        setProducts([]);
+        setLoading(false);
+        return;
+      }
+
+      Promise.all(promises)
         .then((chunks) => setProducts(chunks.flat()))
         .finally(() => setLoading(false));
       return;
     }
 
-    if (typeof target === "number") {
-      apiListProducts(target)
-        .then((list) =>
-          setProducts(
-            list.map(
-              (p) => ({ ...p, _typeId: target } as ProductRow)
-            )
+    // 單一類型
+    apiListProducts(target)
+      .then((list) =>
+        setProducts(
+          list.map(
+            (p) =>
+              ({
+                ...p,
+                _typeId: target,
+              } as ProductRow)
           )
         )
-        .finally(() => setLoading(false));
-    }
+      )
+      .finally(() => setLoading(false));
   }
 
-  async function ensureTypeIdToUse(): Promise<number> {
+  async function ensureTypeIdToUse(): Promise<string> {
+    // 選「新增類型…」
     if (selectedType === "__new") {
       const name = (newTypeName || "").trim();
       if (!name) throw new Error("請輸入新的分類名稱");
+
       const created = await apiCreateProductType({ name });
-      const newId = pickTypeId(created);
+      const newId = extractTypeDisplayId(created);
       if (!newId) throw new Error("建立分類失敗");
 
       const list = ensureArray<ProductType>(await apiListProductTypes());
@@ -286,25 +353,32 @@ export default function ProductListPage() {
       setSelectedType(newId);
 
       if (tid !== newId) {
-        setResolvedTid(newId);
-        navigate(`/products/${newId}`, { replace: true });
+        navigate(`/products/${encodeURIComponent(newId)}`, {
+          replace: true,
+        });
       }
       return newId;
     }
-    if (!selectedType && typeof tid === "number") return tid;
-    if (typeof selectedType === "number") return selectedType;
-    if (typeof tid === "number") return tid;
+
+    // 已在對話框選好類型
+    if (selectedType && selectedType !== "__new") {
+      return selectedType;
+    }
+
+    // 沒特別選，就沿用目前的 tid（如果不是 __all）
+    if (tid !== "__all") return tid;
+
     throw new Error("尚未選擇產品分類");
   }
 
   // ---------- CRUD handlers ----------
   const [openModal, setOpenModal] = useState<null | "new" | "edit">(null);
   const [newName, setNewName] = useState("");
-  const [editId, setEditId] = useState<number | null>(null);
-  const [editTypeId, setEditTypeId] = useState<number | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editTypeId, setEditTypeId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [menuOpen, setMenuOpen] = useState<number | null>(null);
-  const btnRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const btnRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   async function handleAdd() {
     if (readOnly) return;
@@ -320,8 +394,9 @@ export default function ProductListPage() {
       setNewTypeName("");
 
       if (tid !== useTid) {
-        setResolvedTid(useTid);
-        navigate(`/products/${useTid}`, { replace: true });
+        navigate(`/products/${encodeURIComponent(useTid)}`, {
+          replace: true,
+        });
       }
       refresh(useTid);
     } catch (err: any) {
@@ -342,14 +417,13 @@ export default function ProductListPage() {
 
   async function handleDelete(p: ProductRow) {
     if (readOnly) return;
-    const typeId =
-      p._typeId ?? (typeof tid === "number" ? tid : null);
+    const typeId = p._typeId ?? (tid !== "__all" ? tid : null);
     if (!typeId) {
       alert("刪除失敗：找不到商品所屬分類。");
       return;
     }
     try {
-      await apiDeleteProduct(typeId, p.id as number);
+      await apiDeleteProduct(typeId, p.id as any);
       setProducts((prev) =>
         prev.filter(
           (x) => !(x.id === p.id && x._typeId === typeId)
@@ -362,14 +436,13 @@ export default function ProductListPage() {
 
   async function handleDuplicate(p: ProductRow) {
     if (readOnly) return;
-    const typeId =
-      p._typeId ?? (typeof tid === "number" ? tid : null);
+    const typeId = p._typeId ?? (tid !== "__all" ? tid : null);
     if (!typeId) {
       alert("複製失敗：找不到商品所屬分類。");
       return;
     }
     try {
-      const src = await apiGetProduct(typeId, p.id as number);
+      const src = await apiGetProduct(typeId, p.id as any);
       await apiCreateProduct(typeId, { name: `${src.name} (複製)` });
       refresh(typeId);
     } catch (err: any) {
@@ -402,8 +475,8 @@ export default function ProductListPage() {
     }
   }
 
-  function handleCardClick(e: React.MouseEvent, id: number) {
-    if (menuOpen === id) {
+  function handleCardClick(e: React.MouseEvent, id: any) {
+    if (menuOpen === String(id)) {
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -411,20 +484,22 @@ export default function ProductListPage() {
     navigate(`/products/${encodeURIComponent(String(id))}/lifecycle`);
   }
 
-  function handleCardKeyDown(e: React.KeyboardEvent, id: number) {
+  function handleCardKeyDown(e: React.KeyboardEvent, id: any) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       handleCardClick(e as unknown as React.MouseEvent, id);
     }
   }
 
-  async function handleSwitchType(e: React.ChangeEvent<HTMLSelectElement>) {
+  async function handleSwitchType(
+    e: React.ChangeEvent<HTMLSelectElement>
+  ) {
     const v = e.target.value;
 
     if (v === "__all") {
       setResolvedTid("__all");
       if (params.typeId !== "__all") navigate(`/products/__all`);
-      refresh("__all");
+      else refresh("__all");
       return;
     }
 
@@ -434,26 +509,27 @@ export default function ProductListPage() {
       if (!name) return;
       try {
         const created = await apiCreateProductType({ name });
-        const newId = pickTypeId(created);
+        const newId = extractTypeDisplayId(created);
         if (!newId) throw new Error("建立類型失敗");
+
         const list = ensureArray<ProductType>(await apiListProductTypes());
         setTypeOptions(list);
         setResolvedTid(newId);
-        navigate(`/products/${newId}`, { replace: true });
+        navigate(`/products/${encodeURIComponent(newId)}`, {
+          replace: true,
+        });
       } catch (err: any) {
         alert("建立類型失敗：" + (err?.message || err));
       }
       return;
     }
 
-    const next = Number(v);
-    if (Number.isFinite(next) && next > 0) {
-      setResolvedTid(next);
-      if (String(params.typeId) !== String(next)) {
-        navigate(`/products/${next}`);
-      } else {
-        refresh(next);
-      }
+    // 一般切換到某個既有類型（例如 PRT1）
+    setResolvedTid(v as TidLike);
+    if (params.typeId !== v) {
+      navigate(`/products/${encodeURIComponent(v)}`);
+    } else {
+      refresh(v as TidLike);
     }
   }
 
@@ -462,7 +538,7 @@ export default function ProductListPage() {
       <S.TopBar>
         <h2>
           商品列表
-          {tid ? (tid === "__all" ? "" : `（type: ${tid}）`) : ""}
+          {tid === "__all" ? "" : `（type: ${tid}）`}
         </h2>
 
         <div
@@ -476,17 +552,22 @@ export default function ProductListPage() {
           >
             <span style={{ fontSize: 12, color: "#666" }}>類型</span>
             <select
-              value={tid ?? "__all"}
+              value={tid}
               onChange={handleSwitchType}
               disabled={!typeOptions.length && !canEdit}
               style={{ padding: "6px 8px" }}
             >
               <option value="__all">（所有商品）</option>
-              {typeOptions.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {displayTypeName(t.name)}
-                </option>
-              ))}
+              {typeOptions.map((t, index) => {
+                const typeId = getTypeDisplayId(t) || `__idx_${index}`;
+                return (
+                  <option key={typeId} value={typeId}>
+                    {displayTypeName(
+                      (t as any).name ?? (t as any).product_type_name
+                    )}
+                  </option>
+                );
+              })}
               {canEdit && <option value="__new">＋ 新增類型…</option>}
             </select>
           </div>
@@ -496,12 +577,20 @@ export default function ProductListPage() {
       </S.TopBar>
 
       <S.Hint>
-        已登入：{isAuthed ? account || "(未命名)" : "（未登入）"}（
-        {mapRole(user?.user_type)}）{readOnly ? "｜檢視模式" : ""}
+        已登入：
+        {isAuthed ? account || "(未命名)" : "（未登入）"}
+        （{mapRole(user?.user_type)}）
+        {readOnly ? "｜檢視模式" : ""}
       </S.Hint>
 
       {loading ? (
-        <p style={{ textAlign: "center", color: "#888", marginTop: 24 }}>
+        <p
+          style={{
+            textAlign: "center",
+            color: "#888",
+            marginTop: 24,
+          }}
+        >
           載入中…
         </p>
       ) : (
@@ -518,97 +607,103 @@ export default function ProductListPage() {
                   : "此類型尚無商品，請點右下角＋新增"}
               </p>
             ) : (
-              products.map((p) => (
-                <S.ProductCard
-                  key={`${p._typeId ?? "x"}-${p.id}`}
-                  onClick={(e) => handleCardClick(e, p.id as number)}
-                  onKeyDown={(e) => handleCardKeyDown(e, p.id as number)}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`商品：${p.name}`}
-                >
-                  <S.Thumb />
-                  <S.ProductInfo>
-                    <S.ProductName>{p.name}</S.ProductName>
-                    <S.ProductMeta>
-                      商品編號{" "}
-                      {p.serialNumber
-                        ? `#${p.serialNumber}`
-                        : p.id
-                        ? `#${p.id}`
-                        : "—"}
-                    </S.ProductMeta>
-                  </S.ProductInfo>
+              products.map((p) => {
+                const key = `${p._typeId ?? "x"}-${String(p.id)}`;
+                const idStr = String(p.id);
+                return (
+                  <S.ProductCard
+                    key={key}
+                    onClick={(e) => handleCardClick(e, idStr)}
+                    onKeyDown={(e) =>
+                      handleCardKeyDown(e, idStr)
+                    }
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`商品：${p.name}`}
+                  >
+                    <S.Thumb />
+                    <S.ProductInfo>
+                      <S.ProductName>{p.name}</S.ProductName>
+                      <S.ProductMeta>
+                        商品編號{" "}
+                        {p.serialNumber
+                          ? `#${p.serialNumber}`
+                          : p.id
+                          ? `#${p.id}`
+                          : "—"}
+                      </S.ProductMeta>
+                    </S.ProductInfo>
 
-                  {/* ✅ 在 __all 也可以編輯/刪除，因為有 _typeId 了 */}
-                  {!readOnly && (
-                    <>
-                      <S.MenuWrapper
-                        ref={(el) => (btnRefs.current[p.id as number] = el)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMenuOpen(
-                            menuOpen === (p.id as number)
-                              ? null
-                              : (p.id as number)
-                          );
-                        }}
-                        aria-haspopup="menu"
-                        aria-expanded={menuOpen === p.id}
-                        aria-label="更多操作"
-                      >
-                        ⋮
-                      </S.MenuWrapper>
-
-                      <DropdownMenu
-                        anchorRef={{
-                          current: btnRefs.current[p.id as number],
-                        }}
-                        open={menuOpen === p.id}
-                        onClose={() => setMenuOpen(null)}
-                      >
-                        <li
+                    {/* 在 __all 也可以編輯 / 刪除，因為有 _typeId 了 */}
+                    {!readOnly && (
+                      <>
+                        <S.MenuWrapper
+                          ref={(el) =>
+                            (btnRefs.current[idStr] = el)
+                          }
                           onClick={(e) => {
-                            e.preventDefault();
                             e.stopPropagation();
-                            setEditId(p.id as number);
-                            setEditTypeId(
-                              p._typeId ??
-                                (typeof tid === "number" ? tid : null)
+                            setMenuOpen(
+                              menuOpen === idStr ? null : idStr
                             );
-                            setEditName(p.name as string);
-                            setOpenModal("edit");
-                            setMenuOpen(null);
                           }}
+                          aria-haspopup="menu"
+                          aria-expanded={menuOpen === idStr}
+                          aria-label="更多操作"
                         >
-                          編輯名稱
-                        </li>
-                        <li
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDuplicate(p);
-                            setMenuOpen(null);
+                          ⋮
+                        </S.MenuWrapper>
+
+                        <DropdownMenu
+                          anchorRef={{
+                            current: btnRefs.current[idStr],
                           }}
+                          open={menuOpen === idStr}
+                          onClose={() => setMenuOpen(null)}
                         >
-                          複製
-                        </li>
-                        <li
-                          className="danger"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleDelete(p);
-                            setMenuOpen(null);
-                          }}
-                        >
-                          刪除
-                        </li>
-                      </DropdownMenu>
-                    </>
-                  )}
-                </S.ProductCard>
-              ))
+                          <li
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setEditId(idStr);
+                              setEditTypeId(
+                                p._typeId ??
+                                  (tid !== "__all" ? tid : null)
+                              );
+                              setEditName(p.name as string);
+                              setOpenModal("edit");
+                              setMenuOpen(null);
+                            }}
+                          >
+                            編輯名稱
+                          </li>
+                          <li
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDuplicate(p);
+                              setMenuOpen(null);
+                            }}
+                          >
+                            複製
+                          </li>
+                          <li
+                            className="danger"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDelete(p);
+                              setMenuOpen(null);
+                            }}
+                          >
+                            刪除
+                          </li>
+                        </DropdownMenu>
+                      </>
+                    )}
+                  </S.ProductCard>
+                );
+              })
             )}
           </S.List>
         </>
@@ -625,6 +720,7 @@ export default function ProductListPage() {
         </S.Fab>
       )}
 
+      {/* 新增商品 Modal */}
       <Modal
         open={!readOnly && openModal === "new"}
         onClose={() => setOpenModal(null)}
@@ -637,7 +733,13 @@ export default function ProductListPage() {
           }}
         >
           <h3>新增商品</h3>
-          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              marginTop: 8,
+            }}
+          >
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
@@ -645,28 +747,40 @@ export default function ProductListPage() {
               required
             />
 
-            <label style={{ fontSize: 12, color: "#666" }}>產品類型</label>
+            <label style={{ fontSize: 12, color: "#666" }}>
+              產品類型
+            </label>
             <select
-              value={selectedType ?? ""}
+              value={selectedType}
               onChange={(e) => {
                 const v = e.target.value;
                 if (v === "__new") setSelectedType("__new");
-                else setSelectedType(Number(v));
+                else setSelectedType(v);
               }}
               required
             >
-              {typeOptions.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {displayTypeName(t.name)}
-                </option>
-              ))}
-              {canEdit && <option value="__new">＋ 新增類型…</option>}
+              {typeOptions.map((t, index) => {
+                const typeId = getTypeDisplayId(t) || `__idx_${index}`;
+                return (
+                  <option key={typeId} value={typeId}>
+                    {displayTypeName(
+                      (t as any).name ??
+                        (t as any).product_type_name
+                    )}
+                  </option>
+                );
+              })}
+              {canEdit && (
+                <option value="__new">＋ 新增類型…</option>
+              )}
             </select>
 
             {selectedType === "__new" && (
               <input
                 value={newTypeName}
-                onChange={(e) => setNewTypeName(e.target.value)}
+                onChange={(e) =>
+                  setNewTypeName(e.target.value)
+                }
                 placeholder="輸入新類型名稱"
                 required
               />
@@ -682,7 +796,10 @@ export default function ProductListPage() {
               justifyContent: "flex-end",
             }}
           >
-            <GhostButton type="button" onClick={() => setOpenModal(null)}>
+            <GhostButton
+              type="button"
+              onClick={() => setOpenModal(null)}
+            >
               取消
             </GhostButton>
             <PrimaryButton type="submit">新增</PrimaryButton>
@@ -690,6 +807,7 @@ export default function ProductListPage() {
         </form>
       </Modal>
 
+      {/* 修改商品名稱 Modal */}
       <Modal
         open={!readOnly && openModal === "edit"}
         onClose={() => setOpenModal(null)}
@@ -716,7 +834,10 @@ export default function ProductListPage() {
               justifyContent: "flex-end",
             }}
           >
-            <GhostButton type="button" onClick={() => setOpenModal(null)}>
+            <GhostButton
+              type="button"
+              onClick={() => setOpenModal(null)}
+            >
               取消
             </GhostButton>
             <PrimaryButton type="submit">儲存</PrimaryButton>
