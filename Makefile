@@ -170,13 +170,22 @@ seed: ## Seed dev data into DB
 up-chain: ## Start chain-service container
 	@echo "🚀 Starting Chain Service..."
 	docker compose up -d $(CHAIN_SVC)
-	@echo "⏳ Waiting for chain-service to be ready..."
-	@for i in $$(seq 1 30); do \
-	  code=$$(curl -s -o /dev/null -w "%{http_code}" "$(CHAIN_URL)/health" || true); \
-	  if [ "$$code" = "200" ]; then echo "✅ Chain-service is ready at $(CHAIN_URL)"; exit 0; fi; \
+	@echo "⏳ Waiting for chain-service to be ready on $(CHAIN_URL)/health..."
+	@ok=0; \
+	for i in $$(seq 1 30); do \
+	  code=$$(curl -s -m 2 --connect-timeout 1 -o /dev/null -w "%{http_code}" "$(CHAIN_URL)/health" || true); \
+	  echo "probe $$i: HTTP $$code"; \
+	  if [ "$$code" = "200" ]; then \
+	    echo "✅ Chain-service is ready"; ok=1; break; \
+	  fi; \
 	  sleep 1; \
 	done; \
-	echo "❌ Chain-service did not respond in time"; exit 1
+	if [ "$$ok" -ne 1 ]; then \
+	  echo "❌ Chain-service did not respond in time"; \
+	  echo "📜 Last 120 lines of logs:"; \
+	  docker compose logs --tail=120 $(CHAIN_SVC) || true; \
+	  exit 1; \
+	fi
 
 rebuild-chain: ## Rebuild chain-service image without cache
 	@echo "🔧 Rebuilding chain-service image..."
