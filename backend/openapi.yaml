@@ -1,5 +1,4 @@
 # backend/openapi.yaml
-# YAML file defining the OpenAPI specification for the on-chain API, used by Swagger UI at /docs
 openapi: 3.0.3
 info:
   title: CarbonManager On-Chain API
@@ -21,7 +20,7 @@ paths:
         - in: path
           name: emission_id
           required: true
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
       responses:
         "201":
           description: Created
@@ -140,13 +139,12 @@ paths:
                     type: string
                   role:
                     type: string
-                  current_organization_id:
-                    type: integer
+                  organization_id:
+                    type: string
         "400":
           description: Missing or invalid input
         "409":
-          description: User already exists
-          
+          description: User already exists         
   /auth/login:
     post:
       summary: Login with account and password
@@ -160,7 +158,7 @@ paths:
               properties:
                 account:
                   type: string
-                  example: boss@example.com
+                  example: user@example.com
                 password:
                   type: string
                   example: mysecret
@@ -172,7 +170,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  status_message:
+                  status:
                     type: string
                   account:
                     type: string
@@ -183,7 +181,7 @@ paths:
                   role:
                     type: string
                   current_organization_id:
-                    type: integer
+                    type: string
         "400":
           description: Invalid input
         "401":
@@ -202,19 +200,25 @@ paths:
               schema:
                 type: object
                 properties:
-                  id:
-                    type: integer
+                  user_id:
+                    type: string
+                    example: USR1
                   email_account:
                     type: string
-                  name:
+                    example: user@example.com
+                  user_name:
                     type: string
+                    example: Alice
                   user_type:
                     type: string
                     enum: [shop, customer]
                   organization_id:
-                    type: integer
+                    type: string
+                    example: ORG4
         "401":
           description: Unauthorized
+        "404":
+          description: User not found
     put:
       summary: Update current logged-in user profile
       tags: [Authorization]
@@ -229,29 +233,13 @@ paths:
               properties:
                 organization_name:
                   type: string
-                  example: organization_name
+                  example: Lee's New Tea Shop
                 user_type:
                   type: string
-                  example: user_type
+                  example: shop
       responses:
         "200":
           description: User profile updated successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    type: integer
-                  email_account:
-                    type: string
-                  name:
-                    type: string
-                  user_type:
-                    type: string
-                    enum: [shop, customer]
-                  organization_id:
-                    type: integer
         "400":
           description: Invalid input
         "401":
@@ -271,9 +259,9 @@ paths:
                 properties:
                   status_message:
                     type: string
+                    example: User deleted successfully
         "401":
-          description: Unauthorized
-                
+          description: Unauthorized           
   /product_types:
     get:
       summary: Get all available product types from this organization 
@@ -286,14 +274,19 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    id:
-                      type: integer
-                    name:
-                      type: string
+                type: object
+                properties:
+                  product_types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        product_type_id:
+                          type: string
+                          example: PT1
+                        product_type_name:
+                          type: string
+                          example: Green Tea 2025
         "500":
           description: Server error
     post:
@@ -308,18 +301,41 @@ paths:
             schema:
               type: object
               properties:
-                name:
+                product_type_name:
                   type: string
-                  example: Green Tea 2025
+                  example: Green Tea 2025 
       responses:
         "201":
           description: Product type created successfully
           content:
             application/json:
-                  name:
+              schema:
+                type: object
+                properties:
+                  product_type_id:
                     type: string
+                    example: PT1
+                  product_type_name:
+                    type: string
+                    example: Green Tea 2025
+                  organization_id: 
+                    type: string
+                    example: ORG4
+                  organization_name:
+                    type: string
+                    example: Lee's Tea
+                  created_at: 
+                    type: string
+                    example: 2024-01-01T12:00:00Z
+                  updated_at: 
+                    type: string
+                    example: 2024-01-01T12:00:00Z
+                  order_id:
+                    type: int
+                    example: 1
+
         "400":
-          description: Invalid input
+          description: Invalid input   
         "401":
           description: Unauthorized
         "409":
@@ -334,7 +350,7 @@ paths:
           - in: path
             name: product_type_id
             required: true
-            schema: { type: integer, minimum: 1 }
+            schema: { type: string, minimum: 1 }
         responses:
           "200":
             description: Product type details
@@ -343,12 +359,24 @@ paths:
                 schema:
                   type: object
                   properties:
-                    id:
-                      type: integer
-                    name:
+                    product_type_id:
                       type: string
-                    description:
+                      example: PT1
+                    product_type_name:
                       type: string
+                      example: Green Tea 2025
+                    organization_id:
+                      type: string
+                      example: ORG4
+                    organization_name:
+                      type: string
+                      example: Lee's Tea
+                    created_at: 
+                      type: string
+                      example: 2024-01-01T12:00:00Z
+                    updated_at:
+                      type: string
+                      example: 2024-01-01T12:00:00Z
           "404":
             description: Product type not found
       put:
@@ -360,7 +388,7 @@ paths:
           - in: path
             name: product_type_id
             required: true
-            schema: { type: integer, minimum: 1 }
+            schema: { type: string, minimum: 1 }
         requestBody:      
           required: true
           content:
@@ -374,17 +402,6 @@ paths:
         responses:
           "200":
             description: Product type updated successfully
-            content:
-              application/json:
-                schema:
-                  type: object
-                  properties:
-                    id:
-                      type: integer     
-                    name:
-                      type: string
-                    description:
-                      type: string
           "400":
             description: Invalid input
           "401":
@@ -400,7 +417,7 @@ paths:
           - in: path
             name: product_type_id
             required: true        
-            schema: { type: integer, minimum: 1 }
+            schema: { type: string, minimum: 1 }
         responses:
           "200":
             description: Product type deleted successfully
@@ -409,16 +426,14 @@ paths:
                 schema:
                   type: object
                   properties:
-                    status message:
+                    status:
                       type: string
-                    id:
-                      type: integer
-                    product type_name:
+                    product_type_id:
+                      type: string
+                    product_type_name:
                       type: string
                     order_id:
                       type: integer
-                    name:
-                      type: string
                     
           "401":
             description: Unauthorized     
@@ -434,7 +449,7 @@ paths:
         - name: product_type_id
           in: path
           required: true
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
       responses:
         "200":
           description: List of products
@@ -445,9 +460,9 @@ paths:
                 items:
                   type: object
                   properties:
-                    id:
-                      type: integer
-                    name:
+                    product_id:
+                      type: string
+                    product_name:
                       type: string
     post:
       summary: Create a new product under a product type
@@ -458,7 +473,7 @@ paths:
         - name: product_type_id
           in: path
           required: true
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
       requestBody:
         required: true
         content:
@@ -477,10 +492,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  id:
-                    type: integer
-                  name:
+                  product_id:
                     type: string
+                    example: PRD1
+                  product_name:
+                    type: string
+                    example: Green Tea Batch 
         "400":
           description: Invalid input
         "401":
@@ -489,7 +506,7 @@ paths:
           description: Product type not found
         "409":
           description: Product already exists
-  /product_types/{product_type_id}/products/{product_id}:
+  /products/{product_id}:
     get:
       summary: Get a product by ID
       tags: [Products]
@@ -499,11 +516,11 @@ paths:
         - name: product_type_id
           in: path
           required: true
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
         - name: product_id
           in: path
           required: true
-          schema: { type: integer, minimum: 1 }     
+          schema: { type: string, minimum: 1 }     
       responses:
         "200":
           description: Product details
@@ -512,12 +529,26 @@ paths:
               schema:   
                 type: object
                 properties:
-                  id:
-                    type: integer
-                  name:
+                  product_id:
                     type: string
-                  product_type_id:
-                    type: integer
+                    example: PD1
+                  product_name:
+                    type: string
+                    example: Green Tea Batch
+                  serial_number:
+                    type: string
+                  total_emission:
+                    type: number
+                    format: float
+                    example: 123.45
+                  created_at:
+                    type: string
+                    example: 2024-01-01T12:00:00Z
+                  ended_at:
+                    type: string
+                    example: 2024-01-31T12:00:00Z
+                  code:
+                    type: string
         "404":
           description: Product not found
     put:    
@@ -529,11 +560,11 @@ paths:
         - name: product_type_id
           in: path
           required: true
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
         - name: product_id
           in: path
           required: true
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
       requestBody:      
         required: true
         content:
@@ -541,23 +572,12 @@ paths:
             schema:
               type: object
               properties:
-                name:
+                new_product_name:
                   type: string
-                  example: Updated Batch #12345
+                  example: Updated Batch 
       responses:
         "200":
           description: Product updated successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    type: integer     
-                  name:
-                    type: string
-                  product_type_id:
-                    type: integer
         "400":
           description: Invalid input
         "401":
@@ -573,11 +593,11 @@ paths:
         - name: product_type_id  
           in: path
           required: true
-          schema: { type: integer, minimum: 1 }  
+          schema: { type: string, minimum: 1 }  
         - name: product_id
           in: path
           required: true        
-          schema: { type: integer, minimum: 1 }
+          schema: { type: string, minimum: 1 }
       responses:
         "200":
           description: Product deleted successfully
@@ -586,11 +606,462 @@ paths:
               schema:
                 type: object
                 properties:
-                  message:
+                  status_message:
                     type: string
         "401":
           description: Unauthorized
         "404":
-          description: Product not found      
-
-  
+          description: Product not found 
+  /products/{product_id}/steps/{stage_id}:
+    get:
+      summary: Get all steps order under a stage of a product
+      tags: [Product Steps]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+        - name: stage_id
+          in: path
+          required: true
+          schema: { type: string }   
+      responses:
+        "200":
+          description: List of stage orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    step_id:
+                      type: string
+                    step_name:
+                      type: string
+                    tag_id:
+                      type: string
+                    sort_order:
+                      type: integer
+        "404":
+          description: Product not found
+  /products/{product_id}/steps:
+    post:
+      summary: Create a new step order under a stage of a product
+      tags: [Product Steps]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_id  
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                step_id:
+                  type: string
+                  example: STP1
+                step_name: 
+                  type: string
+                  example: 原料採購
+                tag_id:
+                  type: string
+                  example: TAG1
+                sort_order:
+                  type: integer
+                  example: 1
+                created_at:
+                  type: string
+                  example: 2024-01-01T12:00:00Z
+      responses:
+        "201":
+          description: Stage order created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  step_id:
+                    type: string
+                  order:
+                    type: integer
+                  tag_id:
+                    type: string
+                  stage_id:
+                    type: string
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthorized 
+  /products/{product_id}/emissions:
+    get:
+      summary: Get all emissions under a product
+      tags: [Product Emissions]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+      responses:
+        "200":
+          description: List of emissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    emission_id:
+                      type: string
+                    amount:
+                      type: number
+                      format: float
+                    timestamp:
+                      type: string
+                      format: date-time
+        "404":
+          description: Product not found
+    post:
+      summary: Create a new emission under a product
+      tags: [Product Emissions]
+      security:     
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+      requestBody:    
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: 原料採購-瓶裝水
+                step_id:
+                  type: string
+                  example: STP1
+                tag_id:
+                  type: string
+                  example: TAG1
+                stage_id:
+                  type: string 
+                  example: raw
+                factor_id:
+                  type: integer
+                  example: 1
+                material:
+                  type: string
+                  example: 瓶裝水(2000ml，PET包裝)
+                unit:
+                  type: string
+                  example: 瓶
+                quantity:
+                  type: number
+                  format: float
+                  example: 2
+      responses:
+        "201":
+          description: Emission created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  emission_id:
+                    type: string
+                  status_message:
+                    type: string
+  /products/{product_id}/emissions/summary:
+    get:
+      summary: Get emissions summary for a product
+      tags: [Product Emissions]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: product_type_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+        - name: product_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+      responses:
+        "200":
+          description: Emissions summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_emissions:
+                    type: number
+                    format: float
+                  average_emissions:
+                    type: number
+                    format: float
+                  emission_count:
+                    type: integer
+        "404":
+          description: Product not found
+  /emissions:
+    get:
+      summary: Get all emissions from one organization, across all product types and products
+      tags: [Emissions]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of all emissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    emission_id:
+                      type: string
+                    emission_name:
+                      type: string
+                    stage_id:
+                      type: string
+                    step_id:
+                      type: string
+                    tag_id:
+                      type: string
+                    factor_id:
+                      type: integer
+                    quantity:
+                      type: number
+                      format: float
+                    emission_amount:
+                      type: number
+                      format: float
+                    created_at:
+                      type: string
+                    created_by:
+                      type: string
+  /emissions/{emission_id}:
+    get:
+      summary: Get an emission by ID
+      tags: [Emissions]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: emission_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }     
+      responses:
+        "200":
+          description: Emission details
+          content:
+            application/json:
+              schema:   
+                type: object
+                properties:
+                  emission_id:
+                    type: string
+                  emission_name:
+                    type: string
+                  stage_id:
+                    type: string
+                  step_id:
+                    type: string
+                  tag_id:
+                    type: string
+                  factor_id:
+                    type: integer
+                  quantity:
+                    type: number
+                    format: float
+                  emission_amount:
+                    type: number
+                    format: float
+                  unit_target_amount:
+                    type: number
+                  created_at:
+                    type: string
+                  created_by:
+                    type: string
+        "404":
+          description: Emission not found
+    put:
+      summary: Update an emission by ID
+      tags: [Emissions]
+      security:
+        - BearerAuth: []        
+      parameters:
+        - name: emission_id
+          in: path
+          required: true
+          schema: { type: string, minimum: 1 }
+      requestBody:      
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                new amount:
+                  type: number
+                  format: float
+                  example: 23.45
+      responses:
+        "200":
+          description: Emission updated successfully
+        "400":
+          description: Invalid input
+        "401":
+          description: Unauthorized
+        "404":
+          description: Emission not found
+    delete:
+      summary: Delete an emission by ID 
+      tags: [Emissions]
+      security:
+        - BearerAuth: []
+      parameters:     
+        - name: emission_id
+          in: path
+          required: true        
+          schema: { type: string, minimum: 1 }
+      responses:  
+        "200":
+          description: Emission deleted successfully
+          content:
+            application/json: 
+              schema:
+                type: object
+                properties:
+                  status_message:
+                    type: string
+        "401":
+          description: Unauthorized
+        "404":
+          description: Emission not found
+  /factors:
+    get:
+      summary: Retrieve emission factors
+      description: 
+        Returns a list of emission factors. Supports search and filtering.
+      tags:
+        - Factors
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+          required: false
+          description: Free-text keyword to search factor names, categories, or subcategories.
+        - in: query
+          name: category
+          schema:
+            type: string
+          required: false
+          description: Filter by main category (e.g., 能資源, 包裝資材).
+        - in: query
+          name: midcategory
+          schema:
+            type: string
+          required: false
+          description: Filter by middle category.
+        - in: query
+          name: subcategory
+          schema:
+            type: string
+          required: false
+          description: Filter by subcategory.
+        - in: query
+          name: unit
+          schema:
+            type: string
+          required: false
+          description: Filter by unit type (e.g., 立方公尺(m3), 平方公尺(m2)).
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+          required: false
+          description: Number of results to return.
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+          required: false
+          description: Number of items to skip before starting to return results.
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        factor_id:
+                          type: string
+                        factor_name:
+                          type: string
+                        coefficient:
+                          type: number
+                        unit:
+                          type: string
+                        category:
+                          type: string
+                        subcategory:
+                          type: string
+                        midcategory:
+                          type: string
+                        announcement_year:
+                          type: integer
+  /report/{product_id}:
+    get:
+      summary: 
+        Download Excel report for a product
+      parameters:
+        - in: path
+          name: product_id
+          required: true
+          schema:
+            type: string
+      security:
+        - BearerAuth: []
+      responses:
+        200:
+            description: Excel file
+        400:
+          description: Bad request
+        401:
+          description: Unauthorized
