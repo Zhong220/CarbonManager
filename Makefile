@@ -106,7 +106,6 @@ backend-up: ## Start Flask backend
 	docker compose up -d $(BACKEND_SVC)
 	@echo "Backend at $(URL)"
 	$(MAKE) backend-wait
-	$(MAKE) open-site
 	
 backend-logs: ## Tail backend logs
 	docker compose logs -f $(BACKEND_SVC) &
@@ -115,10 +114,16 @@ backend-logs: ## Tail backend logs
 backend-ls: ## List backend files (recursive)
 	docker compose exec backend ls -R
 
+
+# ========== Frontend ==========
+frontend-up: ## Start frontend service
+	@echo "🚀 Starting Frontend..."
+	docker compose up -d frontend
+	@echo "Frontend at http://80
+
 # ========== One-shot flows ==========
-up: down db-up migrate backend-up up-chain ## Start clean: fix networks -> DB -> migrations -> backend -> chain
+up: down db-up migrate backend-up frontend-up up-chain ## Start clean: fix networks -> DB -> migrations -> backend -> chain
 	@echo "🚀 All services are up"
-	$(MAKE) open-site
 
 down: ## Stop all services
 	docker compose down
@@ -202,3 +207,8 @@ deploy-prod: ## Deploy to production using scripts/deploy.sh (full flow)
 
 deploy-prod-app: ## Deploy only app containers (no migrations)
 	bash scripts/deploy.sh app
+
+
+# ========== SSL Certificates ==========
+ssl: ## Obtain/renew SSL certs using certbot (standalone mode)
+	sudo certbot certonly --standalone -d cfp.sssun.com
