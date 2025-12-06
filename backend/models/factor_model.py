@@ -1,89 +1,66 @@
-from backend.database import get_db
-
-FACTOR_COLLECTION = "factors"
-
-
-def create_factor(
-    name, unit, value_per_unit, category, region="Taiwan", source="環境部"
-):
-    with get_db() as conn:
-        cursor = conn.cursor(dictionary=True)
-        sql = """
-            INSERT INTO factors (name, unit, value_per_unit, category, region, source)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        values = (name, unit, float(value_per_unit), category, region, source)
-        cursor.execute(sql, values)
-        conn.commit()
-        return cursor.lastrowid
-
+# backend/models/factor_model.py
+from db_connection import get_db
+from mysql.connector import Error
 
 def get_factor(factor_id):
     with get_db() as conn:
         cursor = conn.cursor(dictionary=True)
         sql = "SELECT * FROM factors WHERE id = %s"
         cursor.execute(sql, (factor_id,))
-        return cursor.fetchone()
+    return cursor.fetchone()
 
-
-def get_factors_by_category(category):
+def search_factors(
+    q=None,
+    category=None,
+    midcategory=None,
+    subcategory=None,
+    unit=None,
+    limit=20,
+    offset=0,
+):
     with get_db() as conn:
         cursor = conn.cursor(dictionary=True)
-        sql = "SELECT * FROM factors WHERE category = %s"
-        cursor.execute(sql, (category,))
-        return cursor.fetchall()
 
+        sql = """
+            SELECT *
+            FROM factors
+            WHERE 1 = 1
+        """
+        params = []
 
-def get_factors_by_region(region):
-    with get_db() as conn:
-        cursor = conn.cursor(dictionary=True)
-        sql = "SELECT * FROM factors WHERE region = %s"
-        cursor.execute(sql, (region,))
-        return cursor.fetchall()
+        # free-text search
+        if q:
+            like = f"%{q}%"
+            sql += """
+                AND (
+                    name LIKE %s
+                    OR category LIKE %s
+                    OR midcategory LIKE %s
+                    OR subcategory LIKE %s
+                )
+            """
+            params.extend([like, like, like, like])
 
+        # exact filters
+        if category:
+            sql += " AND category = %s"
+            params.append(category)
 
-def get_most_used_factors(limit=10):
-    with get_db() as conn:
-        cursor = conn.cursor(dictionary=True)
-        sql = "SELECT * FROM factors ORDER BY usage_count DESC LIMIT %s"
-        cursor.execute(sql, (limit,))
-        return cursor.fetchall()
+        if midcategory:
+            sql += " AND midcategory = %s"
+            params.append(midcategory)
 
+        if subcategory:
+            sql += " AND subcategory = %s"
+            params.append(subcategory)
 
-def increment_usage_count(factor_id):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        sql = "UPDATE factors SET usage_count = usage_count + 1 WHERE id = %s"
-        cursor.execute(sql, (factor_id,))
-        conn.commit()
-        return True
+        if unit:
+            sql += " AND unit = %s"
+            params.append(unit)
 
+        # ordering + pagination
+        sql += " ORDER BY id LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
 
-def update_factor(factor_id, data):
-    # Ensure value_per_unit is float if provided
-    if "value_per_unit" in data:
-        data["value_per_unit"] = float(data["value_per_unit"])
-    with get_db() as conn:
-        cursor = conn.cursor()
-        sql = "UPDATE factors SET name = %s, unit = %s, value_per_unit = %s, category = %s, region = %s, source = %s WHERE id = %s"
-        values = (
-            data["name"],
-            data["unit"],
-            data["value_per_unit"],
-            data["category"],
-            data["region"],
-            data["source"],
-            factor_id,
-        )
-        cursor.execute(sql, values)
-        conn.commit()
-        return True
-
-
-def delete_factor(factor_id):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        sql = "DELETE FROM factors WHERE id = %s"
-        cursor.execute(sql, (factor_id,))
-        conn.commit()
-        return True
+        cursor.execute(sql, tuple(params))
+    return cursor.fetchall()

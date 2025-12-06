@@ -126,3 +126,17 @@ def get_user_organization(user_id: int) -> dict | None:
             return cur.fetchone()
         finally:
             cur.close()
+
+
+def delete_user(user_id: int) -> None:
+    sql = """
+        DELETE FROM users
+        WHERE id = %s
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute(sql, (user_id,))
+            conn.commit()
+        finally:
+            cur.close()

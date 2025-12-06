@@ -11,17 +11,23 @@ from routes.product_types import product_types_bp
 from routes.products import product_bp
 from routes.factor import factor_bp
 from routes.emissions import emission_bp
-# Load environment variables
-load_dotenv()
+from routes.report import report_bp
 
+load_dotenv()
 jwt = JWTManager()
 
 
 def create_app(config_class=Config):
     app = Flask(__name__)
+    
     app.config.from_object(config_class)  # Load configuration
-
-    jwt.init_app(app)  # Initialize JWT
+    app.config["REPORT_TEMPLATE"] = os.path.join(
+        app.root_path, "report", "report_template.xlsx"
+    )
+    app.config["REPORT_RECORDS_DIR"] = os.path.join(
+        app.root_path, "report", "records"
+    )
+    jwt.init_app(app)  
 
     # register blueprints
     app.register_blueprint(onchain_bp)
@@ -30,6 +36,7 @@ def create_app(config_class=Config):
     app.register_blueprint(product_bp)
     app.register_blueprint(factor_bp)
     app.register_blueprint(emission_bp) 
+    app.register_blueprint(report_bp)
     
     # --------- Swagger ---------
     @app.route("/openapi.yaml")  # Serve raw OpenAPI file
@@ -57,9 +64,7 @@ def create_app(config_class=Config):
     def docs():
         return SWAGGER_HTML
 
-    @app.route("/health")  # Health check route
-    def health():
-        return jsonify(ok=True), 200
+    # List existing routes
     @app.route("/_routes")
     def list_routes():
         routes = []
@@ -69,8 +74,9 @@ def create_app(config_class=Config):
                 "methods": list(rule.methods),
                 "rule": str(rule)
             })
-        return jsonify(routes)
         
+        return jsonify(routes)
+    
     return app
 
 
@@ -78,6 +84,4 @@ app = create_app()
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 if __name__ == "__main__":
-    app.run(
-        debug=True, host="0.0.0.0", port=5000
-    )  # Listening on port 5000 inside the container
+    app.run(debug=True, host="0.0.0.0", port=5000)
