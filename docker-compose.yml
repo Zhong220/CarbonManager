@@ -61,16 +61,22 @@ services:
     networks:
       - carbonmanager_net
   
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #     args:
-  #       VITE_API_BASE_URL: /api
-  #   container_name: carbon-manager-frontend
-  #   restart: unless-stopped
-  #   ports:
-  #     - "80:80"        
+  frontend:
+    build:
+      context: ./test_frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    container_name: carbon-manager-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443" 
+    volumes:
+      - /etc/letsencrypt/live/cfp.sssun.com/fullchain.pem:/etc/ssl/certs/fullchain.pem:ro
+      - /etc/letsencrypt/live/cfp.sssun.com/privkey.pem:/etc/ssl/certs/privkey.pem:ro
+    networks:
+      - carbonmanager_net
       
   chain-service:
     build:
