@@ -16,7 +16,7 @@ const abiJson = JSON.parse(fs.readFileSync(abiPath, "utf8"));
 // connect to Quorum node
 const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
 
-const contract = new ethers.Contract(process.env.CONTRACT_ADDRESS, abiJson.abi, provider);
+const contract = new ethers.Contract(process.env.CONTRACT_ADDRESS, abiJson, provider);
 
 // Search and print all records
 try {
