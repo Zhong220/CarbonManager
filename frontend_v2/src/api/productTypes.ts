@@ -1,4 +1,3 @@
-// src/api/productTypes.ts
 // ====================================================================
 // Product Types API bindings
 // - List, create, update, delete product types
@@ -7,12 +6,13 @@
 import { http } from "./http";
 
 export interface ProductType {
-  id: number;
+  /** 後端的 id（目前是 display id，例如 PRT1，用字串存） */
+  id: string;
   name: string;
   order_id?: number | null;
   organization_id?: number | null;
-  created_at?: string;
-  updated_at?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 // -------------------- Helpers --------------------
@@ -21,19 +21,38 @@ function normalize(pt: any): ProductType {
   if (!pt) {
     throw new Error("Empty product type payload");
   }
+
+  // 後端現在用的是 display id：product_type_id = "PRT1"
+  const rawId = pt.product_type_id ?? pt.id ?? pt.display_id;
+
+  // ★ 關鍵修正：把 product_type_name 也納入，最後才 fallback 成「未分類」
+  const rawName =
+    pt.name ??
+    pt.product_type_name ?? // 後端 list_all / add_type / get_pt 回傳的欄位
+    pt.type_name ??
+    "";
+
+  // organization_id 可能是數字，也可能是 "ORG5"
+  let orgId: number | null = null;
+  if (pt.organization_id !== undefined && pt.organization_id !== null) {
+    if (typeof pt.organization_id === "string") {
+      const m = pt.organization_id.match(/\d+$/);
+      orgId = m ? Number(m[0]) : null;
+    } else {
+      orgId = Number(pt.organization_id);
+    }
+  }
+
   return {
-    id: Number(pt.id),
-    name: String(pt.name ?? pt.type_name ?? ""),
+    id: String(rawId),
+    name: rawName === "" ? "未分類" : String(rawName),
     order_id:
       pt.order_id !== undefined && pt.order_id !== null
         ? Number(pt.order_id)
         : null,
-    organization_id:
-      pt.organization_id !== undefined && pt.organization_id !== null
-        ? Number(pt.organization_id)
-        : null,
-    created_at: pt.created_at ?? null ?? undefined,
-    updated_at: pt.updated_at ?? null ?? undefined,
+    organization_id: orgId,
+    created_at: pt.created_at ?? null,
+    updated_at: pt.updated_at ?? null,
   };
 }
 
@@ -58,11 +77,10 @@ export async function apiListProductTypes(): Promise<ProductType[]> {
   return raw.map(normalize);
 }
 
-/** Get a single product type by id */
-export async function apiGetProductType(id: number): Promise<ProductType | null> {
+/** Get a single product type by id (display id like "PRT1") */
+export async function apiGetProductType(id: string): Promise<ProductType | null> {
   const res = await http.get<any>(`/api/product_types/${id}`);
   if (!res) return null;
-  // 可能包在 {product_type: {...}}
   const raw = res.product_type ?? res;
   return normalize(raw);
 }
@@ -75,25 +93,31 @@ export async function apiCreateProductType(payload: {
 }): Promise<ProductType> {
   try {
     const res = await http.post<any>("/api/product_types", payload);
-    // 後端目前回的可能是直接 row 或 {product_type: row}
     const raw = res.product_type ?? res;
     return normalize(raw);
   } catch (err: any) {
-    // 特別處理 409：代表這個名稱的 type 已存在
-    const status = err?.status ?? err?.response?.status;
-    if (status === 409) {
-      // 再去 list 一次從現有清單找同名的
+    // ★ 保險機制：建立失敗時（包含 409），若已存在同名就直接回那一筆
+    try {
       const list = await apiListProductTypes();
       const existing = findByName(list, payload.name);
-      if (existing) return existing;
+      if (existing) {
+        console.warn(
+          "[apiCreateProductType] create failed but found existing, reuse it:",
+          existing
+        );
+        return existing;
+      }
+    } catch (e) {
+      console.warn("[apiCreateProductType] fallback list failed:", e);
     }
+
     throw err;
   }
 }
 
 /** Update product type name/order */
 export async function apiUpdateProductType(
-  id: number,
+  id: string,
   patch: Partial<{ name: string; order_id: number }>
 ): Promise<ProductType> {
   const res = await http.put<any>(`/api/product_types/${id}`, patch);
@@ -102,7 +126,7 @@ export async function apiUpdateProductType(
 }
 
 /** Delete product type */
-export async function apiDeleteProductType(id: number): Promise<void> {
+export async function apiDeleteProductType(id: string): Promise<void> {
   await http.delete(`/api/product_types/${id}`);
 }
 
@@ -113,8 +137,8 @@ export async function apiDeleteProductType(id: number): Promise<void> {
  * Strategy:
  *   1) 先 list
  *   2) 有名稱包含 "default" 的就用那個
- *   3) 沒有就嘗試建立 ""
- *   4) 建立時若撞到 409（已存在），再 list 一次找同名的
+ *   3) 沒有就嘗試建立「未分類」
+ *   4) 建立時若撞到 409 或其它錯誤，就再 list 一次找同名的
  */
 export async function apiGetOrCreateDefaultType(): Promise<ProductType> {
   const list = await apiListProductTypes();
@@ -126,10 +150,6 @@ export async function apiGetOrCreateDefaultType(): Promise<ProductType> {
 
   if (defaultLike) return defaultLike;
 
-  // 這裡可能兩個地方同時進來呼叫，會發生：
-  // - A: list → 沒有 → create ⇒ 201
-  // - B: list → 沒有 → create ⇒ 409 (名稱已存在)
-  // 所以上面的 apiCreateProductType 已經把 409 當成「去抓現有那一筆」處理好了。
   return apiCreateProductType({ name: "未分類" });
 }
 

@@ -2,14 +2,12 @@ import {
   apiCreateEmission,
   apiSearchFactors,
   apiListFactorsByTag,
-  apiListStages,
   apiListEmissionsByProduct,
   apiListStepsByStage,
   apiSaveStepOrder,
   FactorDTO,
-  StageRow,
   EmissionDTO,
-  StageId, // ★ 新增
+  StageId,
 } from "@/api/lifecycle";
 import React, { useMemo, useEffect, useState } from "react";
 import styled from "styled-components";
@@ -80,6 +78,16 @@ const STEP_TAG_ID_MAP: Partial<Record<StepTag, number>> = {
   焚化: 22,
   掩埋: 23,
 };
+
+/** 反向：tag_id → StepTag（從上面那張 map 自動翻過來） */
+const TAG_ID_TO_STEP_TAG: Record<number, StepTag> = Object.entries(
+  STEP_TAG_ID_MAP
+).reduce((acc, [tagName, id]) => {
+  if (typeof id === "number") {
+    acc[id] = tagName as StepTag;
+  }
+  return acc;
+}, {} as Record<number, StepTag>);
 
 function useIsMobile(bp = 720) {
   const [isMobile, setIsMobile] = useState(
@@ -153,17 +161,91 @@ function mapEmissionToLifeRecord(row: EmissionDTO & any): LifeRecord {
   const unit =
     row.factor_unit ?? row.transport_unit ?? row.fuel_input_unit ?? "";
 
-  return {
-    id: String(row.id),
-    productId: String(row.product_id),
-    stageId: (row.stage_id as FixedStageId) ?? "raw",
-    stepId: row.step_id
+  // ---------- stageId 處理：字串/數字都吃 ----------
+  let stageId: FixedStageId = "raw";
+  const s = row.stage_id;
+  if (typeof s === "string") {
+    const low = s.toLowerCase();
+    if (
+      low === "raw" ||
+      low === "manufacture" ||
+      low === "distribution" ||
+      low === "use" ||
+      low === "disposal"
+    ) {
+      stageId = low as FixedStageId;
+    } else if (low === "1") stageId = "raw";
+    else if (low === "2") stageId = "manufacture";
+    else if (low === "3") stageId = "distribution";
+    else if (low === "4") stageId = "use";
+    else if (low === "5") stageId = "disposal";
+  } else if (typeof s === "number") {
+    if (s === 1) stageId = "raw";
+    else if (s === 2) stageId = "manufacture";
+    else if (s === 3) stageId = "distribution";
+    else if (s === 4) stageId = "use";
+    else if (s === 5) stageId = "disposal";
+  }
+
+  // ---------- tag：優先用 row.step_tag / row.tag 的「中文名稱」 ----------
+  let tagName: StepTag | "" = "";
+
+  const rawStepTag = (
+    (row.step_tag as string | undefined) ??
+    (row.tag as string | undefined) ??
+    ""
+  ).trim();
+
+  if (rawStepTag) {
+    // 後端如果直接存「肥料、農藥」這種，就直接拿來當 StepTag
+    tagName = rawStepTag as StepTag;
+  } else if (row.tag_id != null) {
+    // 沒有字串，就用 tag_id 對照表
+    let idNum: number | null = null;
+    if (typeof row.tag_id === "number") {
+      idNum = row.tag_id;
+    } else if (typeof row.tag_id === "string") {
+      const m = row.tag_id.match(/\d+$/);
+      if (m) idNum = Number(m[0]);
+    }
+    if (idNum != null && TAG_ID_TO_STEP_TAG[idNum]) {
+      tagName = TAG_ID_TO_STEP_TAG[idNum];
+    }
+  }
+
+  // ---------- 顯示用名稱 ----------
+  // stepLabel 代表「步驟名稱」，tagName 只是分類標籤
+  const stepLabel =
+    row.step_name || // 後端有真正的步驟名稱就用這個
+    tagName || // 沒有就退回用 tag 名稱
+    row.material ||
+    row.name ||
+    "(未命名步驟)";
+
+  const stepId =
+    row.step_id != null
       ? String(row.step_id)
-      : row.step_tag
-      ? `tag-${row.step_tag}`
-      : `step-${row.id}`,
-    stepLabel: row.step_name ?? row.step_tag ?? row.name ?? "(未命名步驟)",
-    tag: row.step_tag ?? row.tag ?? "",
+      : tagName
+      ? `tag-${tagName}`
+      : `em-${row.id ?? ""}`;
+
+  // 給一個穩定的 id（避免 row.id/row.product_id 沒給）
+  const safeId =
+    row.id != null
+      ? String(row.id)
+      : row.emission_id != null
+      ? String(row.emission_id)
+      : `${row.product_id ?? "P"}-${stageId}-${stepId}-${
+          ts ?? Date.now()
+        }-${Math.random().toString(36).slice(2, 8)}`;
+
+  return {
+    id: safeId,
+    productId: String(row.product_id ?? ""),
+    stageId,
+    stepId,
+    stepLabel,
+    tag: tagName || "",
     material: row.material ?? row.name ?? "",
     amount: Number(amount) || 0,
     unit,
@@ -190,31 +272,6 @@ export default function ProductLifeCyclePage() {
   const canEdit = role === "Farmer";
   const canRead = role !== "None";
   const readOnly = !canEdit;
-
-  const [_stageRows, setStageRows] = useState<StageRow[] | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        if (!productId) return;
-        const rows = await apiListStages(Number(productId));
-        setStageRows(rows);
-      } catch (e) {
-        console.warn("[stages] 無法取得後端 stages，將以快取/覆蓋推斷。", e);
-        setStageRows(null);
-      }
-    })();
-  }, [productId]);
-
-  useEffect(() => {
-    if (!ready) return;
-    if (!canRead) {
-      const suffix = explicitShopId
-        ? `?shop=${encodeURIComponent(explicitShopId)}`
-        : "";
-      navigate("/products" + suffix);
-    }
-  }, [ready, canRead, explicitShopId, navigate]);
 
   const [productName, setProductName] = useState("");
   const [stages, setStages] = useState<StageConfig[]>([
@@ -257,6 +314,7 @@ export default function ProductLifeCyclePage() {
   useEffect(() => {
     if (!productId || !ready || !canRead) return;
     const shopId = workingShopId;
+    const pidForApi = productId!; // ★ 後端期望的是 PRD 開頭的 display id，不要再轉 Number
 
     const products = loadProducts(shopId);
     const product = products.find(
@@ -273,12 +331,10 @@ export default function ProductLifeCyclePage() {
 
     setTarget(loadTarget(shopId, productId!));
 
-    const pidNum = Number(productId);
-
     // 後端 emissions
     (async () => {
       try {
-        const list = await apiListEmissionsByProduct(pidNum);
+        const list = await apiListEmissionsByProduct(pidForApi as any);
         const mapped = (list || []).map(mapEmissionToLifeRecord);
         setRecords(mapped);
       } catch (e) {
@@ -300,13 +356,30 @@ export default function ProductLifeCyclePage() {
 
         for (const s of FIXED_STAGE_TEMPLATES) {
           const rows = await apiListStepsByStage(s.id as any, {
-            productId: pidNum,
+            productId: pidForApi as any,
           });
-          backendStepsByStage[s.id] = rows.map((r) => ({
-            id: `db:${r.id}`,
-            label: r.name,
-            tag: r.tag || r.name,
-          }));
+
+          backendStepsByStage[s.id] = rows.map((r) => {
+            let numericTagId: number | null = null;
+            if (typeof r.tag_id === "string") {
+              const m = r.tag_id.match(/\d+$/);
+              if (m) numericTagId = Number(m[0]);
+            } else if (typeof r.tag_id === "number") {
+              numericTagId = r.tag_id;
+            }
+
+            const tagName: StepTag =
+              (r.tag as StepTag | null) ||
+              (numericTagId != null
+                ? TAG_ID_TO_STEP_TAG[numericTagId] ?? (r.name as StepTag)
+                : (r.name as StepTag));
+
+            return {
+              id: `db:${r.id}`,
+              label: r.name,
+              tag: tagName,
+            };
+          });
         }
 
         setStages((prev) =>
@@ -326,6 +399,16 @@ export default function ProductLifeCyclePage() {
       }
     })();
   }, [productId, workingShopId, canRead, canEdit, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!canRead) {
+      const suffix = explicitShopId
+        ? `?shop=${encodeURIComponent(explicitShopId)}`
+        : "";
+      navigate("/products" + suffix);
+    }
+  }, [ready, canRead, explicitShopId, navigate]);
 
   /** Factors 載入：keyword/三分類優先；否則用 step_tag -> q=tag -> 寬查 */
   useEffect(() => {
@@ -404,7 +487,7 @@ export default function ProductLifeCyclePage() {
   // 把原本的 syncStepsToBackend 整個換成這版
   async function syncStepsToBackend(stageId: FixedStageId, steps: UserStep[]) {
     if (!productId) return;
-    const pidNum = Number(productId);
+    const pidForApi = productId! as any;
 
     // 找出「這次需要新建到 DB 的步驟」（id 不是 db: 開頭）
     const newSteps = steps.filter((st) => !st.id.startsWith("db:"));
@@ -429,7 +512,7 @@ export default function ProductLifeCyclePage() {
 
         return {
           stage_id: stageId as any as StageId,
-          tag_id: tagId,
+          tag_id: `TAG${tagId}`,
           name: st.label,
           sort_order: sortOrder,
         };
@@ -437,20 +520,19 @@ export default function ProductLifeCyclePage() {
       .filter(Boolean) as any[];
 
     if (!payloadSteps.length) {
-      console.info(
-        "[steps] 沒有任何帶 tag_id 的步驟可同步，略過呼叫後端"
-      );
+      console.info("[steps] 沒有任何帶 tag_id 的步驟可同步，略過呼叫後端");
       return;
     }
 
     try {
-      await apiSaveStepOrder(pidNum, stageId as any as StageId, payloadSteps);
+      await apiSaveStepOrder(
+        pidForApi,
+        stageId as any as StageId,
+        payloadSteps
+      );
       console.log("[steps] 已同步步驟到後端", payloadSteps);
     } catch (e) {
-      console.error(
-        "[steps] 同步步驟到後端失敗（略過，不影響 UI）",
-        e
-      );
+      console.error("[steps] 同步步驟到後端失敗（略過，不影響 UI）", e);
     }
   }
 
@@ -516,9 +598,8 @@ export default function ProductLifeCyclePage() {
     });
   };
 
-  // ★★★ 重點修正區：每次都是「新增一筆 emission」，不再合併同 stage ★★★
   const handleSaveRecord = async () => {
-    if (readOnly || !selectedStep) return;
+    if (readOnly || !selectedStep || !productId) return;
     const amt = parseFloat(inputAmount);
     if (!selectedMaterial || Number.isNaN(amt) || amt <= 0) {
       alert("請選擇係數並輸入用量");
@@ -527,16 +608,8 @@ export default function ProductLifeCyclePage() {
 
     const factorName = String(selectedMaterial.name).trim();
     const nowTs = Math.floor(Date.now() / 1000);
-    const pidNum = Number(productId);
+    const pidForApi = productId! as any;
     const emissionValue = +(parsedCoefficient * amt).toFixed(3);
-
-    console.log("[emission] create new (always POST)", {
-      productId: pidNum,
-      stageId: selectedStep.stageId,
-      factorId: selectedMaterial.id,
-      amt,
-      emissionValue,
-    });
 
     const newItem: LifeRecord = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -553,6 +626,21 @@ export default function ProductLifeCyclePage() {
       date: new Date(nowTs * 1000).toISOString(),
     };
 
+    // ★ 根據 StepTag 找出對應的 tag_id（1~29）
+    const tagIdForPayload = newItem.tag
+      ? STEP_TAG_ID_MAP[newItem.tag as StepTag] ?? null
+      : null;
+
+    console.log("[emission] create new (always POST)", {
+      productId: pidForApi,
+      stageId: selectedStep.stageId,
+      factorId: selectedMaterial.id,
+      amt,
+      emissionValue,
+      tag: newItem.tag,
+      tagIdForPayload,
+    });
+
     const prevRecords = records.slice();
     setRecords((prev) => [...prev, newItem]);
 
@@ -560,8 +648,8 @@ export default function ProductLifeCyclePage() {
       console.log("[emission] POST /emissions payload", {
         fixedStage: selectedStep.stageId,
         step_tag: newItem.tag,
-        name:
-          customMaterialName || selectedMaterial?.name || newItem.material,
+        tag_id: tagIdForPayload, // ★ 新增
+        name: customMaterialName || selectedMaterial?.name || newItem.material,
         factor_id: selectedMaterial?.id ?? null,
         quantity: amt,
         material: newItem.material,
@@ -572,27 +660,37 @@ export default function ProductLifeCyclePage() {
         note: null,
       });
 
-      await apiCreateEmission(pidNum, {
-        fixedStage: selectedStep.stageId,
-        step_tag: newItem.tag,
-        name:
-          customMaterialName || selectedMaterial?.name || newItem.material,
-        factor_id: selectedMaterial?.id ?? null,
-        quantity: amt,
-        material: newItem.material,
-        amount: newItem.amount,
-        emission_amount: Number(newItem.emission) || 0,
-        timestamp: newItem.timestamp ?? null,
-        date: newItem.date ?? null,
-        note: null,
-      });
+      await apiCreateEmission(
+        pidForApi,
+        {
+          fixedStage: selectedStep.stageId,
+          step_tag: newItem.tag,
+          tag_id: tagIdForPayload, // ★ 新增
+          name:
+            customMaterialName || selectedMaterial?.name || newItem.material,
+          factor_id: selectedMaterial?.id ?? null,
+          quantity: amt,
+          material: newItem.material,
+          amount: newItem.amount,
+          emission_amount: Number(newItem.emission) || 0,
+          timestamp: newItem.timestamp ?? null,
+          date: newItem.date ?? null,
+          note: null,
+        } as any // TS 如果抱怨多欄位就這樣壓掉
+      );
 
       // 再重抓一次後端資料，確認 DB 的真實狀態
       try {
-        const list = await apiListEmissionsByProduct(pidNum);
-        const mapped = (list || []).map(mapEmissionToLifeRecord);
-        setRecords(mapped);
-        console.log("[emission] reload from backend", mapped);
+        const list = await apiListEmissionsByProduct(pidForApi);
+        if (Array.isArray(list) && list.length > 0) {
+          const mapped = list.map(mapEmissionToLifeRecord);
+          setRecords(mapped);
+          console.log("[emission] reload from backend", mapped);
+        } else {
+          console.warn(
+            "[emissions] backend 回傳 0 筆，保留目前前端 records（不覆蓋）"
+          );
+        }
       } catch (e) {
         console.warn("[emissions] 重新載入失敗，暫時沿用前端狀態", e);
       }
@@ -644,18 +742,34 @@ export default function ProductLifeCyclePage() {
   const historyItems: RecordItem[] = useMemo(
     () =>
       records
-        .map((r) => ({
-          id: r.id,
-          productName,
-          step: r.tag,
-          stage: stages.find((s) => s.id === r.stageId)?.title ?? "",
-          material: r.material,
-          amount: r.amount,
-          unit: r.unit,
-          emission: r.emission,
-          timestamp: r.timestamp ?? 0,
-          date: r.date,
-        }))
+        .map((r) => {
+          const safeId =
+            r.id ||
+            `${r.productId}-${r.stageId}-${r.stepId}-${
+              r.timestamp ?? ""
+            }-${Math.random().toString(36).slice(2, 8)}`;
+
+          const stageTitle =
+            stages.find((s) => s.id === r.stageId)?.title ?? r.stageId;
+
+          // material 前面加上 tag，變成：「【肥料】尿素」這種格式
+          const materialWithTag = `${r.tag ? `【${r.tag}】` : ""}${
+            r.material || ""
+          }`;
+
+          return {
+            id: safeId,
+            productName,
+            step: r.stepLabel || r.tag || "(未命名步驟)",
+            stage: stageTitle,
+            material: materialWithTag,
+            amount: r.amount,
+            unit: r.unit,
+            emission: r.emission,
+            timestamp: r.timestamp ?? 0,
+            date: r.date,
+          };
+        })
         .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0)),
     [records, stages, productName]
   );

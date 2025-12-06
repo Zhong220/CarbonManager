@@ -30,30 +30,32 @@ function mapRole(userType?: "shop" | "customer" | null) {
   return "None";
 }
 
-// 從後端的 ProductType 物件裡抓「真正用來打 API 的 id」（例如 PRT1）
+// 從後端的 ProductType 物件裡抓「真正用來打 API 的 id」
 function getTypeDisplayId(t: ProductType): string {
+  // 你的 ProductType.normalize 已經把 id 塞好在 t.id
+  // 保留舊邏輯當備援
   const anyT = t as any;
 
   const raw =
+    anyT.id ??
     anyT.product_type_id ?? // 後端常用欄位
     anyT.display_id ?? // 若有額外 display_id 欄位
-    anyT.id ?? // 退而求其次，舊版可能放在 id
     null;
 
   return raw != null ? String(raw) : "";
 }
 
-// 建立 / 新增類型 API 回傳時，從回傳物件裡抽出 display id
+// 建立 / 新增類型 API 回傳時，從回傳物件裡抽出 id
 function extractTypeDisplayId(created: any): string | null {
   if (!created) return null;
   const anyC = created as any;
 
   const raw =
-    anyC.product_type_id ??
     anyC.id ??
+    anyC.product_type_id ??
     anyC.product_type?.id ??
-    anyC.data?.product_type_id ??
     anyC.data?.id ??
+    anyC.data?.product_type_id ??
     null;
 
   if (raw == null) return null;
@@ -75,10 +77,10 @@ function displayTypeName(name?: string) {
   return name;
 }
 
-// typeId：要嘛是 "__all"，要嘛是像 "PRT1" 這種字串
+// typeId：要嘛是 "__all"，要嘛是 id 字串
 type TidLike = "__all" | string;
 
-// 在前端多加一個 _typeId（字串），記錄這個商品屬於哪個分類（例如 "PRT1"）
+// 在前端多加一個 _typeId（字串），記錄這個商品屬於哪個分類
 type ProductRow = UIProduct & { _typeId?: string };
 
 export default function ProductListPage() {
@@ -112,13 +114,13 @@ export default function ProductListPage() {
       return;
     }
 
-    // 其他字串（例如 PRT1）就暫時先吃進來，後面載完 typeOptions 再檢查是否合法
+    // 其他字串就暫時先吃進來，後面載完 typeOptions 再檢查是否合法
     setResolvedTid(urlTid);
   }, [params.typeId, navigate]);
 
   const tid: TidLike = resolvedTid;
 
-  // 先載入「類型清單」，若為空且可編輯 → 自動補建 Default
+  // 先載入「類型清單」，若為空且可編輯 → 自動補建 Default/未分類
   useEffect(() => {
     let cancelled = false;
     if (loadingTypesRef.current) return;
@@ -128,12 +130,13 @@ export default function ProductListPage() {
       try {
         let list = ensureArray<ProductType>(await apiListProductTypes());
 
+        // 完全沒有類型，而且可以編輯 → 自動建立一個預設 type
         if (list.length === 0 && canEdit) {
           try {
             await apiGetOrCreateDefaultType();
             list = ensureArray<ProductType>(await apiListProductTypes());
-          } catch {
-            /* 可能已存在或權限受限，忽略 */
+          } catch (e) {
+            console.warn("[ProductList] auto-create default type failed", e);
           }
         }
 
@@ -143,9 +146,7 @@ export default function ProductListPage() {
 
         // 如果目前 URL 上的 tid 不是 "__all"，檢查一下是否在清單中
         if (!cancelled && tid !== "__all") {
-          const exists = list.some(
-            (t) => getTypeDisplayId(t) === tid
-          );
+          const exists = list.some((t) => getTypeDisplayId(t) === tid);
           if (!exists) {
             setResolvedTid("__all");
             if (params.typeId !== "__all") {
@@ -252,7 +253,7 @@ export default function ProductListPage() {
           return;
         }
 
-        // 指定單一類型（tid 為 PRTx）
+        // 指定單一類型
         const list = await apiListProducts(tid);
         if (!cancelled) {
           setProducts(
@@ -338,26 +339,47 @@ export default function ProductListPage() {
       .finally(() => setLoading(false));
   }
 
+  // 取得「這次新增商品要用哪個 typeId」
   async function ensureTypeIdToUse(): Promise<string> {
     // 選「新增類型…」
     if (selectedType === "__new") {
       const name = (newTypeName || "").trim();
       if (!name) throw new Error("請輸入新的分類名稱");
 
+      // 1) 先從後端 list 一次，看有沒有同名的類型
+      const list = await apiListProductTypes();
+      const dup = list.find(
+        (t) => (t.name || "").toLowerCase() === name.toLowerCase()
+      );
+
+      if (dup) {
+        // 已經有同名，直接用這一筆，不再送 create → 不會噴 409
+        const useId = dup.id;
+        setTypeOptions(list);
+        setSelectedType(useId);
+
+        if (tid !== useId) {
+          navigate(`/products/${encodeURIComponent(useId)}`, {
+            replace: true,
+          });
+        }
+        return useId;
+      }
+
+      // 2) 確定沒有同名才真的去建立
       const created = await apiCreateProductType({ name });
-      const newId = extractTypeDisplayId(created);
-      if (!newId) throw new Error("建立分類失敗");
+      const useId = extractTypeDisplayId(created) ?? created.id;
 
-      const list = ensureArray<ProductType>(await apiListProductTypes());
-      setTypeOptions(list);
-      setSelectedType(newId);
+      const freshList = await apiListProductTypes();
+      setTypeOptions(freshList);
+      setSelectedType(useId);
 
-      if (tid !== newId) {
-        navigate(`/products/${encodeURIComponent(newId)}`, {
+      if (tid !== useId) {
+        navigate(`/products/${encodeURIComponent(useId)}`, {
           replace: true,
         });
       }
-      return newId;
+      return useId;
     }
 
     // 已在對話框選好類型
@@ -400,14 +422,19 @@ export default function ProductListPage() {
       }
       refresh(useTid);
     } catch (err: any) {
+      console.error("[ProductList] handleAdd failed:", err);
+      const status = err?.status ?? err?.response?.status;
       const msg = String(err?.message || err);
+
       if (
         msg.includes("1452") ||
         /foreign key/i.test(msg) ||
-        /not.*found/i.test(msg)
+        /not.*found/i.test(msg) ||
+        status === 404
       ) {
         alert("新增失敗：產品分類不存在或不屬於你的組織。");
-      } else if (msg.includes("409") || /duplicate/i.test(msg)) {
+      } else if (status === 409 || /duplicate/i.test(msg)) {
+        // 這裡是「商品本身」名稱或編號重複
         alert("新增失敗：名稱或編號重複，請換一個名稱再試。");
       } else {
         alert("新增失敗：" + msg);
@@ -425,9 +452,7 @@ export default function ProductListPage() {
     try {
       await apiDeleteProduct(typeId, p.id as any);
       setProducts((prev) =>
-        prev.filter(
-          (x) => !(x.id === p.id && x._typeId === typeId)
-        )
+        prev.filter((x) => !(x.id === p.id && x._typeId === typeId))
       );
     } catch (err: any) {
       alert("刪除失敗：" + (err?.message || err));
@@ -459,15 +484,14 @@ export default function ProductListPage() {
       await apiUpdateProduct(editTypeId, editId, { name });
       setProducts((prev) =>
         prev.map((p) =>
-          p.id === editId && p._typeId === editTypeId
-            ? { ...p, name }
-            : p
+          p.id === editId && p._typeId === editTypeId ? { ...p, name } : p
         )
       );
       setOpenModal(null);
     } catch (err: any) {
+      const status = err?.status ?? err?.response?.status;
       const msg = String(err?.message || err);
-      if (msg.includes("409") || /duplicate/i.test(msg)) {
+      if (status === 409 || /duplicate/i.test(msg)) {
         alert("改名失敗：名稱重複。");
       } else {
         alert("改名失敗：" + msg);
@@ -491,9 +515,7 @@ export default function ProductListPage() {
     }
   }
 
-  async function handleSwitchType(
-    e: React.ChangeEvent<HTMLSelectElement>
-  ) {
+  async function handleSwitchType(e: React.ChangeEvent<HTMLSelectElement>) {
     const v = e.target.value;
 
     if (v === "__all") {
@@ -509,22 +531,23 @@ export default function ProductListPage() {
       if (!name) return;
       try {
         const created = await apiCreateProductType({ name });
-        const newId = extractTypeDisplayId(created);
+        const newId = extractTypeDisplayId(created) ?? created.id;
         if (!newId) throw new Error("建立類型失敗");
 
-        const list = ensureArray<ProductType>(await apiListProductTypes());
+        const list = await apiListProductTypes();
         setTypeOptions(list);
         setResolvedTid(newId);
         navigate(`/products/${encodeURIComponent(newId)}`, {
           replace: true,
         });
       } catch (err: any) {
-        alert("建立類型失敗：" + (err?.message || err));
+        const msg = String(err?.message || err);
+        alert("建立類型失敗：" + msg);
       }
       return;
     }
 
-    // 一般切換到某個既有類型（例如 PRT1）
+    // 一般切換到某個既有類型
     setResolvedTid(v as TidLike);
     if (params.typeId !== v) {
       navigate(`/products/${encodeURIComponent(v)}`);
@@ -614,9 +637,7 @@ export default function ProductListPage() {
                   <S.ProductCard
                     key={key}
                     onClick={(e) => handleCardClick(e, idStr)}
-                    onKeyDown={(e) =>
-                      handleCardKeyDown(e, idStr)
-                    }
+                    onKeyDown={(e) => handleCardKeyDown(e, idStr)}
                     role="button"
                     tabIndex={0}
                     aria-label={`商品：${p.name}`}
@@ -638,9 +659,7 @@ export default function ProductListPage() {
                     {!readOnly && (
                       <>
                         <S.MenuWrapper
-                          ref={(el) =>
-                            (btnRefs.current[idStr] = el)
-                          }
+                          ref={(el) => (btnRefs.current[idStr] = el)}
                           onClick={(e) => {
                             e.stopPropagation();
                             setMenuOpen(
@@ -667,8 +686,7 @@ export default function ProductListPage() {
                               e.stopPropagation();
                               setEditId(idStr);
                               setEditTypeId(
-                                p._typeId ??
-                                  (tid !== "__all" ? tid : null)
+                                p._typeId ?? (tid !== "__all" ? tid : null)
                               );
                               setEditName(p.name as string);
                               setOpenModal("edit");
@@ -778,9 +796,7 @@ export default function ProductListPage() {
             {selectedType === "__new" && (
               <input
                 value={newTypeName}
-                onChange={(e) =>
-                  setNewTypeName(e.target.value)
-                }
+                onChange={(e) => setNewTypeName(e.target.value)}
                 placeholder="輸入新類型名稱"
                 required
               />

@@ -46,10 +46,10 @@ export interface StageDTO {
 export type StageRow = StageDTO;
 
 export interface StepDTO {
-  id: number;
-  stage_id: StageId; // ★ 字串
+  id: number | string; // ★ 支援 "STP1" 這種字串
+  stage_id: StageId;
   tag?: string | null;
-  tag_id?: number | null; // ★ 新增：後端 steps.tag_id
+  tag_id?: string | null; // 後端目前回 "TAG3" 類型
   name: string;
   is_active?: boolean | null;
   sort_order?: number | null;
@@ -120,7 +120,7 @@ function is409(err: any) {
 const LS_UNSYNC_KEY = "unsynced_emissions_v1";
 type UnsyncedItem = {
   _ts: number;
-  productId: number;
+  productId: string | number; // ★ 允許 PRD1 或數字
   payload: CreateEmissionPayload;
 };
 
@@ -134,7 +134,10 @@ function readUnsynced(): UnsyncedItem[] {
 function writeUnsynced(list: UnsyncedItem[]) {
   localStorage.setItem(LS_UNSYNC_KEY, JSON.stringify(list));
 }
-function enqueueUnsynced(productId: number, payload: CreateEmissionPayload) {
+function enqueueUnsynced(
+  productId: string | number,
+  payload: CreateEmissionPayload
+) {
   const list = readUnsynced();
   list.push({ _ts: Date.now(), productId, payload });
   writeUnsynced(list);
@@ -273,11 +276,15 @@ async function tryFetchStages(): Promise<StageRow[] | null> {
 }
 
 async function tryInferStagesFromSummary(
-  productId: number
+  productId: string | number
 ): Promise<StageRow[] | null> {
   try {
+    // 🔧 Hotfix: 後端 /emissions/summary 期待的是 "PD" 前綴
+    const rawId = String(productId);
+    const summaryId = rawId.startsWith("PRD") ? `PD${rawId.slice(3)}` : rawId;
+
     const res = await http.get<any>(
-      `/api/products/${productId}/emissions/summary`
+      `/api/products/${encodeURIComponent(String(summaryId))}/emissions/summary`
     );
 
     if (Array.isArray(res?.stages) && res.stages.length) {
@@ -320,8 +327,11 @@ async function tryInferStagesFromSummary(
     }
     return null;
   } catch (e) {
-    if (is404(e)) return null;
-    throw e;
+    // ❗ 無論 404 或 500，都只視為「沒辦法從 summary 推斷」，不要讓整個流程炸掉
+    if (!is404(e)) {
+      console.warn("[lifecycle] tryInferStagesFromSummary failed", e);
+    }
+    return null;
   }
 }
 
@@ -337,7 +347,9 @@ function toStageMap(rows: StageRow[]): StageMap | null {
       ? take((r) => /(raw|原料|種植)/i.test(`${r.name}${r.code}${r.slug}`))
       : undefined) ??
     (key === "manufacture"
-      ? take((r) => /(manuf|加[工製]|製造)/i.test(`${r.name}${r.code}${r.slug}`))
+      ? take((r) =>
+          /(manuf|加[工製]|製造)/i.test(`${r.name}${r.code}${r.slug}`)
+        )
       : undefined) ??
     (key === "distribution"
       ? take((r) => /(dist|運輸|配送)/i.test(`${r.name}${r.code}${r.slug}`))
@@ -346,20 +358,24 @@ function toStageMap(rows: StageRow[]): StageMap | null {
       ? take((r) => /(use|使用)/i.test(`${r.name}${r.code}${r.slug}`))
       : undefined) ??
     (key === "disposal"
-      ? take((r) => /(dispos|廢棄|處置|回收)/i.test(`${r.name}${r.code}${r.slug}`))
+      ? take((r) =>
+          /(dispos|廢棄|處置|回收)/i.test(`${r.name}${r.code}${r.slug}`)
+        )
       : undefined);
 
   const map: Partial<StageMap> = {};
-  (["raw", "manufacture", "distribution", "use", "disposal"] as StageKey[]).forEach(
-    (k) => {
-      const id = findByKey(k);
-      if (id) (map as any)[k] = id;
-    }
-  );
+  (
+    ["raw", "manufacture", "distribution", "use", "disposal"] as StageKey[]
+  ).forEach((k) => {
+    const id = findByKey(k);
+    if (id) (map as any)[k] = id;
+  });
   return Object.keys(map).length === 5 ? (map as StageMap) : null;
 }
 
-export async function getStageMap(productId?: number): Promise<StageMap> {
+export async function getStageMap(
+  productId?: string | number
+): Promise<StageMap> {
   const cached = readStageCache();
   if (cached) return cached;
 
@@ -372,7 +388,7 @@ export async function getStageMap(productId?: number): Promise<StageMap> {
     }
   }
 
-  if (productId) {
+  if (productId != null) {
     const rows3 = await tryInferStagesFromSummary(productId);
     if (rows3?.length) {
       const map = toStageMap(rows3);
@@ -387,7 +403,9 @@ export async function getStageMap(productId?: number): Promise<StageMap> {
   return DEFAULT_STAGE_MAP;
 }
 
-export async function apiListStages(productId?: number): Promise<StageRow[]> {
+export async function apiListStages(
+  productId?: string | number
+): Promise<StageRow[]> {
   const rows = await tryFetchStages();
   if (rows?.length) return rows;
   const map = await getStageMap(productId);
@@ -400,16 +418,15 @@ export async function apiListStages(productId?: number): Promise<StageRow[]> {
   ];
   return keys.map((k, i) => ({
     id: map[k],
-    name:
-      (
-        {
-          raw: "原料/種植",
-          manufacture: "加工/製造",
-          distribution: "運輸/配送",
-          use: "使用",
-          disposal: "廢棄/回收",
-        } as Record<StageKey, string>
-      )[k],
+    name: (
+      {
+        raw: "原料/種植",
+        manufacture: "加工/製造",
+        distribution: "運輸/配送",
+        use: "使用",
+        disposal: "廢棄/回收",
+      } as Record<StageKey, string>
+    )[k],
     order_id: i + 1,
     is_active: true,
     code: k,
@@ -422,22 +439,35 @@ export async function apiListStages(productId?: number): Promise<StageRow[]> {
 /** 後端 /products/:id/steps 的 payload 形狀 */
 export interface CreateStepPayload {
   stage_id: StageId;
-  tag_id: number;
+  tag_id: string | number; // ★ 可傳 3 或 "TAG3"
   name: string;
   sort_order: number;
 }
 
 export async function apiListStepsByStage(
   stageId: StageId,
-  opts: { productId: number }
+  opts: { productId: string | number } // ★ 允許 PRD1
 ): Promise<StepDTO[]> {
   const { productId } = opts;
   try {
     const res = await http.get<any>(
-      `/api/products/${productId}/steps/${encodeURIComponent(stageId)}`
+      `/api/products/${encodeURIComponent(
+        String(productId)
+      )}/steps/${encodeURIComponent(stageId)}`
     );
-    const list = pickList(res, "steps");
-    return (list || []) as StepDTO[];
+
+    const rawList = pickList(res, "steps") as any[];
+
+    const list: StepDTO[] = (rawList || []).map((raw) => ({
+      // 後端給的是 step_id / step_name / tag_id / sort_order
+      id: raw.step_id ?? raw.id ?? `${stageId}-${raw.step_name ?? ""}`,
+      stage_id: stageId,
+      tag_id: raw.tag_id ?? null, // e.g. "TAG3"
+      name: raw.step_name ?? raw.name ?? "",
+      sort_order: typeof raw.sort_order === "number" ? raw.sort_order : null,
+    }));
+
+    return list;
   } catch (e) {
     if (is404(e)) return [];
     throw e;
@@ -448,16 +478,26 @@ export async function apiListStepsByStage(
  * 建立單一步驟（符合後端 /api/products/:productId/steps）
  */
 export async function apiCreateStep(
-  productId: number,
+  productId: string | number,
   payload: CreateStepPayload
 ): Promise<void> {
+  // 後端 parse_display_id(..., "TAG") 期待的是 "TAG3" 這種字串
+  let tag_id: string | number = payload.tag_id;
+
+  if (typeof tag_id === "number") {
+    tag_id = `TAG${tag_id}`;
+  }
+
   const body = {
     stage_id: payload.stage_id,
-    tag_id: payload.tag_id,
+    tag_id,
     name: payload.name,
     sort_order: payload.sort_order,
   };
-  await http.post(`/api/products/${productId}/steps`, body);
+  await http.post(
+    `/api/products/${encodeURIComponent(String(productId))}/steps`,
+    body
+  );
 }
 
 /**
@@ -466,7 +506,7 @@ export async function apiCreateStep(
  * 若沒有任何步驟帶 tag_id，會直接略過，不再打到後端。
  */
 export async function apiSaveStepOrder(
-  productId: number,
+  productId: string | number,
   stageId: StageId,
   steps: Array<Partial<StepDTO>>
 ): Promise<void> {
@@ -478,14 +518,15 @@ export async function apiSaveStepOrder(
   const normalized: CreateStepPayload[] = [];
   steps.forEach((s, idx) => {
     const any = s as any;
-    const tagId = typeof any.tag_id === "number" ? any.tag_id : null;
-    if (tagId == null) {
-      console.warn(
-        "[apiSaveStepOrder] 此步驟沒有 tag_id，略過同步",
-        any
-      );
+
+    const rawTag = any.tag_id;
+    if (rawTag == null) {
+      console.warn("[apiSaveStepOrder] 此步驟沒有 tag_id，略過同步", any);
       return;
     }
+
+    // 支援 number 或 "TAG3"
+    const tagIdDisplay = typeof rawTag === "string" ? rawTag : `TAG${rawTag}`;
 
     const stage_id: StageId = (any.stage_id as StageId) || stageId;
     const name: string = String(any.name ?? any.label ?? "");
@@ -494,7 +535,7 @@ export async function apiSaveStepOrder(
         ? any.sort_order
         : idx + 1;
 
-    normalized.push({ stage_id, tag_id: tagId, name, sort_order });
+    normalized.push({ stage_id, tag_id: tagIdDisplay, name, sort_order });
   });
 
   if (!normalized.length) {
@@ -597,16 +638,38 @@ export async function apiListFactorsByTag(params: {
 }
 
 /* ================= Emissions ================= */
-function productEmissionBase(productId: number) {
-  return `/api/products/${productId}/emissions`;
+function productEmissionBase(productId: string | number) {
+  return `/api/products/${encodeURIComponent(String(productId))}/emissions`;
 }
 
 export async function apiListEmissionsByProduct(
-  productId: number
+  productId: string | number
 ): Promise<EmissionDTO[]> {
-  const res = await http.get<any>(productEmissionBase(productId));
-  const list = pickList(res, "emissions");
-  return list as EmissionDTO[];
+  
+  const raw = String(productId);
+  const m = raw.match(/(\d+)$/);
+  const pidForList = m ? m[1] : raw;
+
+  try {
+    const res = await http.get<any>(
+      `/api/products/${encodeURIComponent(pidForList)}/emissions`
+    );
+    const list = pickList(res, "emissions");
+    console.log("[apiListEmissionsByProduct] fetched", {
+      productId,
+      pidForList,
+      count: Array.isArray(list) ? list.length : "n/a",
+    });
+    return (list || []) as EmissionDTO[];
+  } catch (e) {
+    if (is404(e)) {
+      console.info(
+        `[apiListEmissionsByProduct] product ${productId} 尚無排放紀錄，回傳空陣列`
+      );
+      return [];
+    }
+    throw e;
+  }
 }
 
 /* 建立 emission 的 payload */
@@ -625,15 +688,15 @@ export interface CreateEmissionPayload {
 
   name?: string | null;
   factor_id?: number | null;
-  tag_id?: number | null;
-  step_id?: number | null;
+  tag_id?: string | number | null; // ★ 支援 "TAG3" 或 3
+  step_id?: string | number | null; // ★ 支援 "STP1" 或 1
   quantity?: number | null;
 
   client_ref?: string | null;
 }
 
 export async function apiCreateEmission(
-  productId: number,
+  productId: string | number,
   payload: CreateEmissionPayload
 ): Promise<void> {
   try {
@@ -651,9 +714,7 @@ export async function apiCreateEmission(
   }
 }
 
-export async function apiGetEmission(
-  emissionId: number
-): Promise<EmissionDTO> {
+export async function apiGetEmission(emissionId: number): Promise<EmissionDTO> {
   const res = await http.get<any>(`/api/emissions/${emissionId}`);
   return res as EmissionDTO;
 }
@@ -723,14 +784,20 @@ export async function apiDeleteEmission(emissionId: number): Promise<void> {
 /* ================= Summary ================= */
 export type ProductSummaryDTO = any;
 export async function apiGetProductSummary(
-  productId: number
+  productId: string | number
 ): Promise<ProductSummaryDTO> {
-  return await http.get<any>(`${productEmissionBase(productId)}/summary`);
+  // 🔧 Hotfix：summary endpoint 需要 "PD" 前綴，不能直接丟 PRD*
+  const rawId = String(productId);
+  const summaryId = rawId.startsWith("PRD") ? `PD${rawId.slice(3)}` : rawId;
+
+  return await http.get<any>(
+    `/api/products/${encodeURIComponent(String(summaryId))}/emissions/summary`
+  );
 }
 
 /* ================= internals ================= */
 async function _postUnderProduct(
-  productId: number,
+  productId: string | number,
   payload: CreateEmissionPayload
 ) {
   const unified = await normalizeCreatePayload(productId, payload);
@@ -764,7 +831,7 @@ function stripUndefined<T extends Record<string, any>>(obj: T): T {
 }
 
 async function normalizeCreatePayload(
-  productId: number,
+  productId: string | number,
   p: CreateEmissionPayload
 ) {
   let stage_id: StageId | null = null;
@@ -806,9 +873,8 @@ localStorage.setItem('lifecycle:stageMap', JSON.stringify({ raw:'raw', manufactu
 
   const base: any = {
     product_id: productId,
-    stage_id, // ★ 字串
+    stage_id,
     quantity,
-    // unit: p.unit ?? null,   // ⚠️ 不送 unit
     name,
     step_tag: p.step_tag ?? null,
     material: p.material ?? null,
@@ -822,10 +888,32 @@ localStorage.setItem('lifecycle:stageMap', JSON.stringify({ raw:'raw', manufactu
       `fe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   };
 
-  for (const k of ["factor_id", "tag_id", "step_id"] as const) {
-    const v = (p as any)[k];
-    if (v !== undefined) base[k] = v;
+  // ---------- 關鍵修改：保證 tag_id / step_id 一定是合法字串，不會是 null ----------
+  // factor_id：照舊，有給就帶
+  const rawFactorId = (p as any).factor_id;
+  if (rawFactorId !== undefined) {
+    base.factor_id = rawFactorId;
   }
+
+  // tag_id：如果沒給，就用預設 "TAG1"
+  let rawTagId = (p as any).tag_id;
+  if (rawTagId == null) {
+    // 之後可以改成根據 step_tag 做 mapping
+    rawTagId = "TAG1";
+  } else if (typeof rawTagId === "number") {
+    rawTagId = `TAG${rawTagId}`;
+  }
+  base.tag_id = rawTagId;
+
+  // step_id：如果沒給，就用預設 "STP1"
+  let rawStepId = (p as any).step_id;
+  if (rawStepId == null) {
+    rawStepId = "STP1";
+  } else if (typeof rawStepId === "number") {
+    rawStepId = `STP${rawStepId}`;
+  }
+  base.step_id = rawStepId;
+  // ---------------------------------------------------------------------
 
   if (quantity != null && base.new_amount == null) base.new_amount = quantity;
   if (total_emission != null) {
