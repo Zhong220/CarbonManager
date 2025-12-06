@@ -96,7 +96,7 @@ backend-rebuild: ## Rebuild backend image without cache
 backend-wait: ## Wait until backend responds 200 OK
 	@echo "⏳ Waiting for backend at $(URL)..."
 	@for i in $$(seq 1 30); do \
-	  code=$$(curl -s -o /dev/null -w "%{http_code}" "$(URL)/health" || true); \
+	  code=$$(curl -s -o /dev/null -w "%{http_code}" "$(URL)" || true); \
 	  if [ "$$code" = "200" ]; then echo "✅ Backend is ready"; exit 0; fi; \
 	  sleep 1; \
 	done; \
