@@ -63,14 +63,16 @@ services:
   
   frontend:
     build:
-      context: ./frontend_v2
+      context: ./test_frontend
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api
     container_name: carbon-manager-frontend
     restart: unless-stopped
     ports:
-      - "80:80"        
+      - "80:80" 
+    networks:
+      - carbonmanager_net
       
   chain-service:
     build:
