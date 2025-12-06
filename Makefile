@@ -93,14 +93,14 @@ migrations: ## Show applied migrations in schema_migrations table
 backend-rebuild: ## Rebuild backend image without cache
 	docker compose build --no-cache $(BACKEND_SVC)
 
-# backend-wait: ## Wait until backend responds 200 OK
-# 	@echo "⏳ Waiting for backend at $(URL)..."
-# 	@for i in $$(seq 1 30); do \
-# 	  code=$$(curl -s -o /dev/null -w "%{http_code}" "$(URL)/health" || true); \
-# 	  if [ "$$code" = "200" ]; then echo "✅ Backend is ready"; exit 0; fi; \
-# 	  sleep 1; \
-# 	done; \
-# 	echo "❌ Backend did not become ready in time"; exit 1
+backend-wait: ## Wait until backend responds 200 OK
+	@echo "⏳ Waiting for backend at $(URL)..."
+	@for i in $$(seq 1 30); do \
+	  code=$$(curl -s -o /dev/null -w "%{http_code}" "$(URL)" || true); \
+	  if [ "$$code" = "200" ]; then echo "✅ Backend is ready"; exit 0; fi; \
+	  sleep 1; \
+	done; \
+	echo "❌ Backend did not become ready in time"; exit 1
 
 backend-up: ## Start Flask backend
 	docker compose up -d $(BACKEND_SVC)
@@ -118,7 +118,6 @@ backend-ls: ## List backend files (recursive)
 # ========== One-shot flows ==========
 up: down db-up migrate backend-up up-chain ## Start clean: fix networks -> DB -> migrations -> backend -> chain
 	@echo "🚀 All services are up"
-	$(MAKE) open-site
 
 down: ## Stop all services
 	docker compose down
