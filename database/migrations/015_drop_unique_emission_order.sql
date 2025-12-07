@@ -1,2 +1,2 @@
-/*ALTER TABLE emissions      
-    DROP INDEX ux_em_order;*/  
+ALTER TABLE emissions      
+    DROP INDEX ux_em_order;
