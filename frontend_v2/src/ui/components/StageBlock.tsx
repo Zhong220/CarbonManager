@@ -15,13 +15,11 @@ import {
   ensureStepOrderFromSteps,
   saveStepOrder,
   getCurrentShopIdSafe,
-  // ✅ 新增：使用 storage 內建的事件與操作
   onStageConfigChanged,
   renameStep as storageRenameStep,
   deleteStep as storageDeleteStep,
 } from "@/utils/storage";
 
-/** Arrow 外觀設定（沿用） */
 type ArrowType = "line" | "chevron" | "triangle" | "dashed";
 const ARROW_CFG = {
   type: "line" as ArrowType,
@@ -36,7 +34,7 @@ const ARROW_CFG = {
 
 type Props = {
   stage: StageConfig;
-  productId: string; // ★ 用來識別 step_order 與讀寫該商品資料
+  productId: string;
   readOnly?: boolean;
   onStepClick: (stageId: FixedStageId, step: UserStep) => void;
   onAddStep: (stageId: FixedStageId, label: string, tag: StepTag) => void;
@@ -167,13 +165,24 @@ export default function StageBlock({
       const next = cfg.find((s) => s.id === stageState.id);
       if (next) setStageState(next);
     });
-    return off;
+    // ✅ 確保回傳的是標準 React cleanup：() => void
+    return () => {
+      if (typeof off === "function") {
+        (off as any)();
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId, productId, stageState.id]);
 
   // 初始化排序（用 stageState）
   const initialOrder = useMemo(
-    () => ensureStepOrderFromSteps(shopId, productId, stageState.id, stageState.steps),
+    () =>
+      ensureStepOrderFromSteps(
+        shopId,
+        productId,
+        stageState.id,
+        stageState.steps
+      ),
     [shopId, productId, stageState.id, stageState.steps]
   );
   const [orderedIds, setOrderedIds] = useState<string[]>(initialOrder);
@@ -434,28 +443,34 @@ export default function StageBlock({
   const doDelete = () => {
     if (!editing) return;
     if (onDeleteStep) {
-      onDeleteStep(stageState.id, editing.id, editing.label, deleteAlsoRecords);
+      onDeleteStep(
+        stageState.id,
+        editing.id,
+        editing.label,
+        deleteAlsoRecords
+      );
     } else {
       // ✅ 使用 storage 內建 delete（會同步 order + 發事件）
-      storageDeleteStep(
-        shopId,
-        productId,
-        stageState.id,
-        editing.id
-      );
+      storageDeleteStep(shopId, productId, stageState.id, editing.id);
       // 若勾選同時刪除紀錄，額外處理（沿用你原邏輯）
       if (deleteAlsoRecords) {
         const records = loadRecords(productId, shopId) || [];
         const kept = records.filter(
-          (r: any) => !recordMatchStep(r, stageState.id, editing.id, editing.label)
+          (r: any) =>
+            !recordMatchStep(r, stageState.id, editing.id, editing.label)
         );
         saveRecords(productId, kept, shopId);
       } else {
         const records = loadRecords(productId, shopId) || [];
         const kept = records.map((r: any) => {
-          if (recordMatchStep(r, stageState.id, editing.id, editing.label)) {
+          if (
+            recordMatchStep(r, stageState.id, editing.id, editing.label)
+          ) {
             const mark = " (已刪除的步驟)";
-            if (typeof r.step === "string" && !String(r.step).includes("已刪除"))
+            if (
+              typeof r.step === "string" &&
+              !String(r.step).includes("已刪除")
+            )
               r.step = String(r.step) + mark;
             if (
               typeof r.stepLabel === "string" &&
@@ -782,9 +797,19 @@ export default function StageBlock({
       />
 
       {/* ====== 編輯步驟 Modal ====== */}
-      <Modal open={!!editing} onClose={closeEdit} title="編輯步驟">
+      <Modal open={!!editing} onClose={closeEdit}>
         {editing && (
           <div style={{ display: "grid", gap: 12 }}>
+            <h3
+              style={{
+                margin: "0 0 4px",
+                fontSize: 15,
+                color: "#2e7d32",
+              }}
+            >
+              編輯步驟
+            </h3>
+
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontSize: 13, color: "#2e7d32" }}>步驟名稱</span>
               <input
@@ -851,20 +876,27 @@ export default function StageBlock({
       </Modal>
 
       {/* ====== 刪除確認 Modal ====== */}
-      <Modal
-        open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        title="確認刪除步驟"
-      >
+      <Modal open={confirmOpen} onClose={() => setConfirmOpen(false)}>
         {editing && (
           <div style={{ display: "grid", gap: 12 }}>
+            <h3
+              style={{
+                margin: "0 0 4px",
+                fontSize: 15,
+                color: "#c62828",
+              }}
+            >
+              確認刪除步驟
+            </h3>
             <div>
               要刪除步驟「<b>{editing.label}</b>」嗎？
             </div>
             <div style={{ fontSize: 12, color: "#2e7d32" }}>
               有 <b>{affectedCount}</b> 筆歷史紀錄屬於此步驟。
             </div>
-            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <label
+              style={{ display: "flex", gap: 8, alignItems: "center" }}
+            >
               <input
                 type="checkbox"
                 checked={deleteAlsoRecords}

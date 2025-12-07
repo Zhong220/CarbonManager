@@ -4,12 +4,12 @@ import DropdownMenu from "@/ui/components/DropdownMenu";
 import { WhiteButton } from "@/ui/primitives/Button";
 import { useNavigate } from "react-router-dom";
 
-import { useUser } from "@/context/UserContext"; // ✅ Use Context first
+import { useUser } from "@/context/UserContext";
 import {
   getAccount as getAccountFromStorage,
-  deleteAccountCompletely as deleteAccountFromStorage, // ✅ renamed in new storage.ts
+  deleteAccountCompletely as deleteAccountFromStorage,
   hardAppReset as hardAppResetStorage,
-  softLogout as softLogoutStorage, // fallback only
+  softLogout as softLogoutStorage,
 } from "@/utils/storage";
 
 /**
@@ -22,10 +22,18 @@ export default function AccountMenu() {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
-  // ✅ Prefer Context (keeps global app state in sync)
-  const { account, logout, removeMyAccount } = useUser();
+  // 先拿到 context，再用 any 讀取額外欄位（避免 UserCtx 型別報錯）
+  const userCtx = useUser();
+  const ctxAny = userCtx as any;
+
+  const logout: (() => void | Promise<void>) | undefined = ctxAny.logout;
+  const removeMyAccount:
+    | (() => void | Promise<void>)
+    | undefined = ctxAny.removeMyAccount;
+
+  const ctxAccount: string | undefined = ctxAny.account;
   const fallbackAcc = getAccountFromStorage();
-  const acc = account ?? fallbackAcc ?? "";
+  const acc = ctxAccount ?? fallbackAcc ?? "";
 
   /** Logout: prefer Context, fallback to local-only; always hard-redirect home */
   const handleLogout = async () => {
@@ -39,7 +47,7 @@ export default function AccountMenu() {
       setOpen(false);
       // Hard redirect to ensure a clean remount (avoids stale router state)
       window.location.replace("/");
-      // If you prefer SPA navigation, you can use:
+      // 如果之後想改回 SPA navigation：
       // navigate("/", { replace: true });
     }
   };
@@ -47,16 +55,19 @@ export default function AccountMenu() {
   /** Delete account: double-confirm, then wipe, then hard-redirect home */
   const handleDelete = async () => {
     if (!acc) return;
-    const ok1 = confirm("確定要刪除此帳號嗎？此動作將刪除此帳號底下的商店、商品、紀錄與分類，無法復原。");
+    const ok1 = confirm(
+      "確定要刪除此帳號嗎？此動作將刪除此帳號底下的商店、商品、紀錄與分類，無法復原。"
+    );
     if (!ok1) return;
     const ok2 = confirm("再次確認：真的要永久刪除此帳號嗎？");
     if (!ok2) return;
 
     try {
       if (removeMyAccount) {
+        // 如果 context 有提供後端刪除帳號，就優先用它
         await Promise.resolve(removeMyAccount());
       } else {
-        // Fallback path: wipe local data
+        // Fallback path: 只清本機資料
         deleteAccountFromStorage(acc);
         hardAppResetStorage?.();
       }

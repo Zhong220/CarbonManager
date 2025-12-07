@@ -1,3 +1,4 @@
+// frontend_v2/src/context/UserContext.tsx
 import React, {
   createContext,
   useCallback,
@@ -26,10 +27,14 @@ type UserCtx = {
   register: (p: RegisterRequest) => Promise<void>;
   logout: () => Promise<void>;
   fetchMe: () => Promise<void>;
-  updateMe: (p: { user_type: BackendUserType; organization_name?: string }) => Promise<void>;
+  updateMe: (p: {
+    user_type: BackendUserType;
+    organization_name?: string;
+  }) => Promise<void>;
 };
 
 const Ctx = createContext<UserCtx | null>(null);
+
 export const useUser = () => {
   const c = useContext(Ctx);
   if (!c) throw new Error("UserContext not mounted");
@@ -42,7 +47,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const hasAccessToken = () => !!localStorage.getItem("access_token");
 
-  /** 只在真的有 token 才打 /auth/me */
   const fetchMe = useCallback(async () => {
     if (!hasAccessToken()) {
       setUser(null);
@@ -56,7 +60,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  /** 全域 401：清 token＋清 user，避免無限循環 */
   useEffect(() => {
     const handler = () => {
       clearTokens();
@@ -67,7 +70,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     return () => http.setOnUnauthorized(null);
   }, []);
 
-  /** 首次掛載：沒 token 直接 ready；有 token 嘗試抓 me */
   useEffect(() => {
     if (!hasAccessToken()) {
       setUser(null);
@@ -77,36 +79,51 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     fetchMe().finally(() => setReady(true));
   }, [fetchMe]);
 
-  const login = useCallback(async (account: string, password: string) => {
-    await auth.login({ account, password });
-    await fetchMe();
-  }, [fetchMe]);
+  const login = useCallback(
+    async (account: string, password: string) => {
+      await auth.login({ account, password });
+      await fetchMe();
+    },
+    [fetchMe]
+  );
 
-  const register = useCallback(async (p: RegisterRequest) => {
-    await auth.register(p);
-    await fetchMe();
-  }, [fetchMe]);
+  const register = useCallback(
+    async (p: RegisterRequest) => {
+      await auth.register(p);
+      await fetchMe();
+    },
+    [fetchMe]
+  );
 
-  const updateMe = useCallback(async (p: { user_type: BackendUserType; organization_name?: string }) => {
-    const me = await auth.updateMe(p);
-    setUser(me);
-  }, []);
+  const updateMe = useCallback(
+    async (p: {
+      user_type: BackendUserType;
+      organization_name?: string;
+    }) => {
+      await auth.updateMe(p);
+      await fetchMe();
+    },
+    [fetchMe]
+  );
 
   const logout = useCallback(async () => {
     await auth.logout();
     setUser(null);
   }, []);
 
-  const value = useMemo<UserCtx>(() => ({
-    ready,
-    user,
-    isAuthed: !!user,
-    login,
-    register,
-    logout,
-    fetchMe,
-    updateMe,
-  }), [ready, user, login, register, logout, fetchMe, updateMe]);
+  const value = useMemo<UserCtx>(
+    () => ({
+      ready,
+      user,
+      isAuthed: !!user,
+      login,
+      register,
+      logout,
+      fetchMe,
+      updateMe,
+    }),
+    [ready, user, login, register, logout, fetchMe, updateMe]
+  );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
