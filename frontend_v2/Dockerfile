@@ -37,8 +37,8 @@ COPY --from=builder /app/dist ./
 
 # Optional: custom nginx config (SPA / routing, gzip, etc.)
 # If your `nginx.conf` is meant to be the default site, use:
-# COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY nginx_test.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+# COPY nginx_test.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80 443
 
