@@ -13,7 +13,9 @@ export type {
 export { FIXED_STAGE_TEMPLATES } from "./types";
 
 // ---------- Constants / helpers ----------
-export { DEFAULT_SHOP_ID } from "./keys";
+import { DEFAULT_SHOP_ID } from "./keys";
+
+export { DEFAULT_SHOP_ID };
 export { getCurrentShopIdSafe } from "./utils";
 
 // ---------- Events ----------

@@ -18,7 +18,6 @@ import StageBlock from "@/ui/components/StageBlock";
 import HistoryList, { RecordItem } from "@/ui/components/HistoryList";
 import { useReport } from "@/context/ReportContext";
 import { useUser } from "@/context/UserContext";
-import type { EmissionRecord } from "@/utils/lifecycleTypes";
 
 import {
   loadProducts,
@@ -34,7 +33,11 @@ import {
   UserStep,
   StepTag,
 } from "@/utils/lifecycleTypes";
-import { aggregateByStageAndStep } from "@/utils/aggregateEmissions";
+import {
+  aggregateByStageAndStep,
+  type EmissionRecord,
+} from "@/utils/aggregateEmissions";
+
 import StageAccordion from "@/ui/components/StageAccordion";
 import { FactorBrowser, FactorPick } from "@/ui/components/FactorBrowser";
 
@@ -620,7 +623,7 @@ export default function ProductLifeCyclePage() {
       date: new Date(nowTs * 1000).toISOString(),
     };
 
-    // ★ 根據 StepTag 找出對應的 tag_id（1~29）
+    // 根據 StepTag 找出對應的 tag_id
     const tagIdForPayload = newItem.tag
       ? STEP_TAG_ID_MAP[newItem.tag as StepTag] ?? null
       : null;
@@ -642,7 +645,7 @@ export default function ProductLifeCyclePage() {
       console.log("[emission] POST /emissions payload", {
         fixedStage: selectedStep.stageId,
         step_tag: newItem.tag,
-        tag_id: tagIdForPayload, // ★ 新增
+        tag_id: tagIdForPayload,
         name: customMaterialName || selectedMaterial?.name || newItem.material,
         factor_id: selectedMaterial?.id ?? null,
         quantity: amt,
@@ -654,26 +657,21 @@ export default function ProductLifeCyclePage() {
         note: null,
       });
 
-      await apiCreateEmission(
-        pidForApi,
-        {
-          fixedStage: selectedStep.stageId,
-          step_tag: newItem.tag,
-          tag_id: tagIdForPayload, // ★ 新增
-          name:
-            customMaterialName || selectedMaterial?.name || newItem.material,
-          factor_id: selectedMaterial?.id ?? null,
-          quantity: amt,
-          material: newItem.material,
-          amount: newItem.amount,
-          emission_amount: Number(newItem.emission) || 0,
-          timestamp: newItem.timestamp ?? null,
-          date: newItem.date ?? null,
-          note: null,
-        } as any // TS 如果抱怨多欄位就這樣壓掉
-      );
+      await apiCreateEmission(pidForApi, {
+        fixedStage: selectedStep.stageId,
+        step_tag: newItem.tag,
+        tag_id: tagIdForPayload,
+        name: customMaterialName || selectedMaterial?.name || newItem.material,
+        factor_id: selectedMaterial?.id ?? null,
+        quantity: amt,
+        material: newItem.material,
+        amount: newItem.amount,
+        emission_amount: Number(newItem.emission) || 0,
+        timestamp: newItem.timestamp ?? null,
+        date: newItem.date ?? null,
+        note: null,
+      } as any);
 
-      // 再重抓一次後端資料，確認 DB 的真實狀態
       try {
         const list = await apiListEmissionsByProduct(pidForApi);
         if (Array.isArray(list) && list.length > 0) {
@@ -847,18 +845,21 @@ export default function ProductLifeCyclePage() {
       ? totalEmission / target.packCount
       : undefined;
 
-  const recordsForAgg: EmissionRecord[] = useMemo(() => {
-    return analysisRecords.map((r) => ({
-      id: r.id,
-      stageId: r.stageId,
-      stageName: stages.find((s) => s.id === r.stageId)?.title ?? r.stageId,
-      stepId: r.stepId,
-      stepName: r.stepLabel ?? r.tag,
-      valueKgCO2e: Number(r.emission) || 0,
-      ts: r.timestamp,
-    }));
-  }, [analysisRecords, stages]);
-
+  const recordsForAgg: EmissionRecord[] = useMemo(
+    () =>
+      analysisRecords.map((r) => ({
+        id: r.id,
+        stageId: String(r.stageId),
+        stageName:
+          stages.find((s) => s.id === r.stageId)?.title ?? String(r.stageId),
+        stepId: String(r.stepId),
+        stepName: r.stepLabel ?? r.tag ?? "(未命名步驟)",
+        valueKgCO2e: Number(r.emission) || 0,
+        ts: r.timestamp ?? undefined,
+      })),
+    [analysisRecords, stages]
+  );
+  
   const stageAgg = useMemo(
     () => aggregateByStageAndStep(recordsForAgg),
     [recordsForAgg]
@@ -1167,7 +1168,7 @@ export default function ProductLifeCyclePage() {
                   setCat(pick.category ?? "");
                   setMid(pick.midcategory ?? "");
                   setSub(pick.subcategory ?? "");
-                  setKeyword(""); // ★ 切換分類時清關鍵字
+                  setKeyword("");
                 }}
               />
 
@@ -1188,7 +1189,7 @@ export default function ProductLifeCyclePage() {
                   </li>
                 )}
                 onChange={(e, val) => setSelectedMaterial(val)}
-                onInputChange={(e, val) => setKeyword(val ?? "")} // ★ 正確綁定輸入
+                onInputChange={(e, val) => setKeyword(val ?? "")}
                 value={selectedMaterial}
                 renderInput={(params) => (
                   <TextField
