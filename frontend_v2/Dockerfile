@@ -1,16 +1,45 @@
-# --- build stage ---
-FROM node:20-alpine AS build
+# ===========================
+# 1. Build stage
+# ===========================
+FROM node:20-alpine AS builder
+
 WORKDIR /app
+
+# 1️⃣ Copy dependency files (use both package.json + package-lock.json)
+# This lets Docker cache `npm ci` as long as deps don't change.
 COPY package*.json ./
-RUN npm ci
+
+# 2️⃣ Install deps (ci = use lockfile, faster & reproducible)
+
+# Change back to npm ci if lockfile is working properly
+# RUN npm ci
+RUN npm install 
+
+# 3️⃣ Copy the rest of the app (including src, public, build-static.js, etc.)
 COPY . .
-# 你的前端 API 呼叫請用 baseURL = /api（見下方 http.ts）
+
+# 4️⃣ Build static files into dist/
 RUN npm run build
 
-# --- serve stage ---
-FROM nginx:alpine
-# 用我們的 nginx 設定（/api 會反代到後端）
-COPY ./nginx/default.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+# ===========================
+# 2. Runtime stage: nginx
+# ===========================
+FROM nginx:1.27-alpine
+
+# Optional but nice: set working dir (not strictly required)
+WORKDIR /usr/share/nginx/html
+
+# Clear default nginx content
+RUN rm -rf ./*
+
+# Copy built frontend
+COPY --from=builder /app/dist ./
+
+# Optional: custom nginx config (SPA / routing, gzip, etc.)
+# If your `nginx.conf` is meant to be the default site, use:
+# COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx_test.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80 443
+
 CMD ["nginx", "-g", "daemon off;"]
