@@ -34,16 +34,10 @@ import {
   UserStep,
   StepTag,
 } from "@/utils/lifecycleTypes";
-import { exportToExcel } from "@/utils/export";
 import { aggregateByStageAndStep } from "@/utils/aggregateEmissions";
 import StageAccordion from "@/ui/components/StageAccordion";
 import { FactorBrowser, FactorPick } from "@/ui/components/FactorBrowser";
 
-/** ★★ 關鍵：tag 名稱 → tag_id 對照表 ★★
- *  這裡的數字是暫填的，請依照資料庫裡真正的 id 修改。
- *  你可以進 MySQL 查：
- *    SELECT id, name FROM tags;   （實際表名請依後端為準）
- */
 const STEP_TAG_ID_MAP: Partial<Record<StepTag, number>> = {
   // 原料取得
   "種子/種苗": 1,
@@ -79,7 +73,7 @@ const STEP_TAG_ID_MAP: Partial<Record<StepTag, number>> = {
   掩埋: 23,
 };
 
-/** 反向：tag_id → StepTag（從上面那張 map 自動翻過來） */
+/* tag_id → StepTag */
 const TAG_ID_TO_STEP_TAG: Record<number, StepTag> = Object.entries(
   STEP_TAG_ID_MAP
 ).reduce((acc, [tagName, id]) => {
@@ -109,7 +103,7 @@ function mapRole(userType?: "shop" | "customer" | null) {
 
 type AnalysisRange = "all" | "7d" | "30d" | "365d";
 
-/* ========== 標的(單一產品) ========== */
+/* ========== 標的 ========== */
 type TargetUnit = "kg" | "pack";
 interface ProductTarget {
   unit: TargetUnit;
@@ -144,7 +138,7 @@ function outputMassKg(t?: ProductTarget | null) {
   return undefined;
 }
 
-/* 後端 emission → LifeRecord 的 mapping（不依賴 emissions.unit） */
+/* 後端 emission → LifeRecord 的 mapping */
 function mapEmissionToLifeRecord(row: EmissionDTO & any): LifeRecord {
   const ts =
     typeof row.timestamp === "number"
@@ -710,23 +704,19 @@ export default function ProductLifeCyclePage() {
     }
   };
 
-  const handleExport = () => {
-    const legacy = records.map((r) => {
-      const stageTitle = stages.find((s) => s.id === r.stageId)?.title ?? "";
-      return {
-        id: r.id,
-        productId: r.productId,
-        stage: stageTitle,
-        step: r.tag,
-        material: r.material,
-        amount: r.amount,
-        unit: r.unit,
-        emission: r.emission,
-        timestamp: r.timestamp,
-        date: r.date,
-      };
-    });
-    exportToExcel(legacy, productName);
+  const handleExport = async () => {
+    if (!productId) {
+      alert("找不到產品 ID，無法匯出報表。");
+      return;
+    }
+
+    try {
+      // productId 是路由上的 PRD*，剛好符合後端 download_report 的需求
+      await exportXlsmByProduct(productId);
+    } catch (err: any) {
+      console.error("[report] 匯出報表失敗", err);
+      alert("匯出報表失敗：" + (err?.message || String(err)));
+    }
   };
 
   const saveAndReturn = () => {
