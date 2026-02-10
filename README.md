@@ -11,46 +11,47 @@ It uses:
 
 
 ## 📂 Project Structure
+### Backend/ Database/ Tools
 
 ```
 .
-├── backend/           # Flask backend (API, models, routes)
-│   ├── run.py
-│   └── ...
-├── database/          # Schema + migrations
-│   ├── migrate.py
-│   └── migrations/
-│       └── 001_init.sql
-├── docker-compose.yml # Compose file for db, backend, migrator
-├── Makefile           # Dev commands
+├── backend
+│   ├── __pycache__
+│   ├── app.py              # Entry point of the program. 
+│   ├── db_connection.py    # Connection to db.
+│   ├── models/             # Direct interaction with db. 
+│   ├── routes/             # Implementation of APIs.               
+│   ├── report/             # Generated report json files. 
+│   ├── config.py
+│   ├── Dockerfile
+│   ├── openapi.yaml        # API testing for frontend. 
+│   ├── requirements.txt
+│   ├── store_factors       # (Can be refactor) Seeding for factors from government. 
+│   └── store_tags          # (Can be refactor) Seeding for tags from government. 
+├── database
+│   ├── Dockerfile
+│   ├── migrate.py          # Control the flow of migration. 
+│   ├── migrations/         # Records of modified schemas. 
+│   └── seeds/              # Sql statments to manually add the seed to db for testing. 
+├── docker-compose.yml
+├── Makefile                 # (Can refactor to scripts) Frequently used commands in Makefile. 
+└── scripts                 # Frequently used commands in scripts. 
+    └── deploy.sh
 ```
 
 ---
 ### 1. Requirements
 
 * Docker & Docker Compose v2+
-* Make (optional, but recommended)
 
 
-
-### 2. Start services
-
-Using Make:
+### 2. Start backend services
 
 ```bash
-make dev         # db -> migrations -> backend
-make logs        # follow backend logs
-make reset-db    # nuke db volume and recreate
+make backend-build         # only the first time
+make up                    # up all the services
 ```
 
-
-Or raw Docker Compose:
-
-```bash
-docker compose up -d db
-docker compose up migrator
-docker compose up -d backend
-```
 
 
 ---
@@ -66,7 +67,7 @@ Migrations are stored in `database/migrations` as ordered `.sql` files:
 To apply new migrations:
 
 ```bash
-docker compose up migrator
+make migrate
 ```
 
 The script will skip already-applied files (tracked in `schema_migrations`).
