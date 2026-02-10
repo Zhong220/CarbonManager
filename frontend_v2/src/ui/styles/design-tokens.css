@@ -1,0 +1,22 @@
+:root{
+  /* 尺寸（新增更合理的容器寬度） */
+  --container-sm: 640px;
+  --container-md: 960px;
+  --container-lg: 1200px;
+  --shell-max: var(--container-lg);
+  --card-max: 480px;
+  --h-pad: 16px;
+
+  /* Header（目前關閉） */
+  --header-h: 0px;
+
+  /* Safe areas */
+  --safe-top: env(safe-area-inset-top);
+  --safe-right: env(safe-area-inset-right);
+  --safe-bottom: env(safe-area-inset-bottom);
+  --safe-left: env(safe-area-inset-left);
+
+  /* 字級 */
+  --fs-14: 14px;
+  --fs-16: 16px;
+}

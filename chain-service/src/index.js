@@ -35,7 +35,7 @@ const contractJson = JSON.parse(fs.readFileSync(contractPath, "utf8"));
 if (!process.env.CONTRACT_ADDRESS) {
   throw new Error("Missing CONTRACT_ADDRESS in .env");
 }
-const contract = new ethers.Contract(process.env.CONTRACT_ADDRESS, contractJson.abi, wallet);
+const contract = new ethers.Contract(process.env.CONTRACT_ADDRESS, contractJson, wallet);
 
 // POST /send: 後端呼叫這個 API 觸發上鏈
 app.post("/send", async (req, res) => {

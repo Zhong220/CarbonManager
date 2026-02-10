@@ -118,6 +118,7 @@ backend-ls: ## List backend files (recursive)
 # ========== Frontend ==========
 frontend-up: ## Start frontend service
 	@echo "🚀 Starting Frontend..."
+	docker compose build frontend
 	docker compose up -d frontend
 	@echo "Frontend at http://80
 

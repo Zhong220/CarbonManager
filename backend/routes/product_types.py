@@ -33,7 +33,7 @@ def add_type():
     name = data.get("name")
     err = _validate_name(name)
     if err:
-        return json_response(error=err, status=400)
+        return json_response({"status": f"400: {err}"}, 400)
     try:
         new_id = create_product_type(organization_id=org["id"], name=name)
         pt = get_product_type_by_id(org["id"], new_id)
@@ -42,15 +42,15 @@ def add_type():
                 "product_type_name": pt["name"],
                 "organization_id": display_id("organizations", org["id"]),
                 "organization_name": pt["organization_name"],  
-                "created_at": pt["created_at"], 
-                "updated_at": pt["updated_at"],
+                "created_at": pt["created_at"].isoformat() if pt["created_at"] is not None else None,
+                "updated_at": pt["updated_at"].isoformat() if pt["updated_at"] is not None else None,
                 "order_id": pt["order_id"]
                 }
             , status=201)
     except IntegrityError:
         return json_response({"status": "409: Product type with this name already exists"}, status=409)
     except Exception as e:
-        return json_response({"status": "500: %e"}, e, 500)
+        return json_response({"status": f"500: {e}"}, 500)
 
 @product_types_bp.get("")
 @jwt_required()
@@ -140,8 +140,8 @@ def get_pt(product_type_id):
                 "product_type_name": pt["name"],
                 "organization_id": display_id("organizations", pt["organization_id"]),
                 "organization_name": pt["organization_name"],
-                "created_at": pt["created_at"].isoformat(), 
-                "updated_at": pt["updated_at"].isoformat(),
+                "created_at": pt["created_at"].isoformat() if pt["created_at"] is not None else None,
+                "updated_at": pt["updated_at"].isoformat() if pt["updated_at"] is not None else None,
                 "order_id": pt["order_id"]
                 }, 200)
         else:

@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 
 # credential files
-.env
+.env*
 .serviceAccountKey.json
 # Logs
 logs
@@ -31,3 +31,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+backend/.venv/

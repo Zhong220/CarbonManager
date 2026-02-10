@@ -63,7 +63,7 @@ services:
   
   frontend:
     build:
-      context: ./test_frontend
+      context: ./frontend_v2
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: /api
