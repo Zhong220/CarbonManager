@@ -90,7 +90,7 @@ migrations: ## Show applied migrations in schema_migrations table
 	  -e "SELECT id, filename, applied_at FROM schema_migrations ORDER BY id;"
 
 # ========== Backend ==========
-backend-rebuild: ## Rebuild backend image without cache
+backend-build: ## Build backend image without cache
 	docker compose build --no-cache $(BACKEND_SVC)
 
 backend-wait: ## Wait until backend responds 200 OK
