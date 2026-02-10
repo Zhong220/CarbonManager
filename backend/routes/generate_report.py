@@ -99,7 +99,7 @@ def generate_json(product_id: int):
             stage_dict[stage_id] = []
 
         record = {
-            "material": em.get("material_name"),
+            "material": em.get("name"),
             "factor_id": em.get("factor_id"),
             "amount": em.get("quantity"),
             "unit": get_factor(em.get("factor_id"))["unit"], # from factor
