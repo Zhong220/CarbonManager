@@ -33,6 +33,10 @@ It uses:
 │   ├── migrate.py          # Control the flow of migration. 
 │   ├── migrations/         # Records of modified schemas. 
 │   └── seeds/              # Sql statments to manually add the seed to db for testing. 
+├── chain-service
+│   ├── Dockerfile
+│   ├── contracts/          # Smart contract source files and ABIs.
+│   └── src/                # API implementation for blockchain interaction (Web3/Ethers).
 ├── docker-compose.yml
 ├── Makefile                 # (Can refactor to scripts) Frequently used commands in Makefile. 
 └── scripts                 # Frequently used commands in scripts. 
