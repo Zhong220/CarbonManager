@@ -120,7 +120,7 @@ frontend-up: ## Start frontend service
 	@echo "🚀 Starting Frontend..."
 	docker compose build frontend
 	docker compose up -d frontend
-	@echo "Frontend at http://80
+	@echo "Frontend at http://80"
 
 # ========== One-shot flows ==========
 up: down db-up migrate backend-up frontend-up up-chain ## Start clean: fix networks -> DB -> migrations -> backend -> chain
